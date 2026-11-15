@@ -2,7 +2,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as P from "./physics/lunarAstronomy";
 import { LanderGame, LIMITS } from "./Lander";
-import { STR, Lang } from "./i18n";
+import { STR, UI, Lang } from "./i18n";
+
+const LangCtx = React.createContext<Lang>("en");
+const trFor = (lang: Lang) => (text: string) => (lang === "en" ? text : UI[lang][text] ?? text);
 
 /** Renders **bold** spans inside a translated string. */
 function Rich({ text }: { text: string }) {
@@ -121,15 +124,24 @@ function NumberRoll({ value }: { value: number }) {
   return <>{String(shown).padStart(2, "0")}</>;
 }
 
-function Panel(props: { title: string; tag?: string; children: React.ReactNode; right?: React.ReactNode }) {
+function Panel(props: { title: string; tag?: string; children: React.ReactNode; right?: React.ReactNode; fold?: boolean }) {
+  const tr = trFor(React.useContext(LangCtx));
+  const [open, setOpen] = useState(!props.fold);
   return (
-    <section className="panel">
+    <section className={"panel" + (props.fold && !open ? " folded" : "")}>
       <div className="panel-head">
-        <h2>{props.title}</h2>
-        {props.right}
-        {props.tag && <span className="tag">{props.tag}</span>}
+        {props.fold ? (
+          <button className="foldbtn" aria-expanded={open} onClick={() => setOpen(!open)}>
+            <h2>{tr(props.title)}</h2>
+            <span className="chev" aria-hidden="true">{open ? "−" : "+"}</span>
+          </button>
+        ) : (
+          <h2>{tr(props.title)}</h2>
+        )}
+        {open && props.right}
+        {props.tag && <span className="tag">{tr(props.tag)}</span>}
       </div>
-      {props.children}
+      {open && props.children}
     </section>
   );
 }
@@ -1200,6 +1212,8 @@ export default function App() {
   const [briefCopied, setBriefCopied] = useState(false);
   const [lang, setLang] = useState<Lang>("en");
   const L = STR[lang];
+  const tr = trFor(lang);
+  const [moreSites, setMoreSites] = useState(false);
   const [cfg, setCfg] = useState({ arrayW: P.DEFAULT_POWER.arrayPeakW, loadW: P.DEFAULT_POWER.loadW, batteryWh: P.DEFAULT_POWER.batteryWh, slopeSafe: P.SLOPE_SAFE_DEG });
   const slopeSafe = cfg.slopeSafe;
   const [relay, setRelay] = useState(false);
@@ -1663,6 +1677,7 @@ export default function App() {
     );
 
   return (
+    <LangCtx.Provider value={lang}>
     <div className="app">
       <Starfield />
       <header className="top">
@@ -1670,7 +1685,7 @@ export default function App() {
           <div className="brand-mark" aria-hidden="true" />
           <div>
             <h1>Lunar Landing Site Navigator</h1>
-            <p>South pole · Sun and Earth above the horizon, by site and date</p>
+            <p>{tr("South pole · Sun and Earth above the horizon, by site and date")}</p>
           </div>
         </div>
         <div className="clock">
@@ -1693,10 +1708,10 @@ export default function App() {
                 setTimeMode("now");
               }}
             >
-              Now
+              {tr("Now")}
             </button>
             <button aria-pressed={timeMode === "set"} disabled={!!crisis} onClick={() => setTimeMode("set")}>
-              Set time
+              {tr("Set time")}
             </button>
           </div>
           {timeMode === "set" && (
@@ -1725,7 +1740,7 @@ export default function App() {
         </div>
         <div className="seg modeseg" role="group" aria-label="Section">
           <button aria-pressed={appMode === "planner"} onClick={() => setAppMode("planner")}>
-            Mission Planner
+            {tr("Mission Planner")}
           </button>
           <button
             aria-pressed={appMode === "game"}
@@ -1735,7 +1750,7 @@ export default function App() {
               setAppMode("game");
             }}
           >
-            ▶ Lander Game
+            {tr("▶ Lander Game")}
           </button>
         </div>
         <label className="langsel">
@@ -1748,14 +1763,14 @@ export default function App() {
         </label>
         <div className="seg" role="group" aria-label="Audience mode" style={appMode === "game" ? { display: "none" } : undefined}>
           <button aria-pressed={mode === "engineer"} onClick={() => setMode("engineer")}>
-            Flight Engineer
+            {tr("Flight Engineer")}
           </button>
           <button aria-pressed={mode === "explorer"} onClick={() => setMode("explorer")}>
-            Explorer
+            {tr("Explorer")}
           </button>
         </div>
         <button className="btn" onClick={() => setShowProv(true)}>
-          Data &amp; Agency Provenance
+          {tr("Data & Agency Provenance")}
         </button>
       </header>
 
@@ -1826,12 +1841,12 @@ export default function App() {
 
       <nav className="tour" aria-label="Guided tour" style={appMode === "game" ? { display: "none" } : undefined}>
         <div className="tour-head">
-          <span className="tour-title">Judge's 60-Second Guided Tour</span>
+          <span className="tour-title">{tr("Judge's 60-Second Guided Tour")}</span>
           <div className="beats">
             {BEATS.map((b, i) => (
               <button key={b} className="beat" aria-pressed={beat === i + 1} onClick={() => runBeat(i + 1)}>
                 <span className="n">{i + 1}</span>
-                <span className="t">{b}</span>
+                <span className="t">{tr(b)}</span>
               </button>
             ))}
           </div>
@@ -1932,10 +1947,10 @@ export default function App() {
                 <dd>{monthHere.toFixed(0)}%</dd>
               </dl>
               <button className="btn small glow" onClick={findBest} disabled={!!crisis || !site.terrain}>
-                ◎ Find best cell
+                {tr("◎ Find best cell")}
               </button>
               <label className="field">
-                Overlay
+                {tr("Overlay")}
                 <select id="overlay" value={overlay} onChange={(e) => setOverlay(e.target.value as Overlay)}>
                   <option value="sun">Sunlight now</option>
                   <option value="earth">Earth link now</option>
@@ -1946,8 +1961,8 @@ export default function App() {
               </label>
             </div>
             <div className={"surface " + surfaceTone}>
-              <span className="k">Landing surface</span>
-              <b>{surface}</b>
+              <span className="k">{tr("Landing surface")}</span>
+              <b>{tr(surface)}</b>
               {site.terrain && (
                 <span className="mono">
                   max {slopeHere.toFixed(1)}° · mean {slopeMean.toFixed(1)}° · roughness {roughHere.toFixed(1)} m
@@ -1999,25 +2014,30 @@ export default function App() {
             <div className="sites">
               {allSites.map((s, i) => (
                 <React.Fragment key={s.id}>
-                  {i === 0 && <div className="grp-label">South pole · LOLA terrain</div>}
-                  {i === 4 && <div className="grp-label">Reference sites · smooth sphere</div>}
-                  <button className="site" aria-pressed={s.id === siteId} onClick={() => pickSite(s.id)} disabled={!!crisis}>
+                  {i === 4 && (
+                    <button className="morebtn" aria-expanded={moreSites || !s.terrain && siteId === s.id} onClick={() => setMoreSites(!moreSites)}>
+                      {tr("More sites and custom coordinates")} <span>{moreSites ? "−" : "+"}</span>
+                    </button>
+                  )}
+                  {i === 0 && <div className="grp-label">{tr("South pole · LOLA terrain")}</div>}
+                  {i === 4 && moreSites && <div className="grp-label">{tr("Reference sites · smooth sphere")}</div>}
+                  <button className="site" style={i >= 4 && !moreSites && s.id !== siteId ? { display: "none" } : undefined} aria-pressed={s.id === siteId} onClick={() => pickSite(s.id)} disabled={!!crisis}>
                     <span className="nm">{s.name}</span>
                     <span className="co">
                       {Math.abs(s.lat).toFixed(2)}°{s.lat < 0 ? "S" : "N"} {s.lon.toFixed(1)}°E
                     </span>
                     <span className="bars">
-                      <span>Sun</span>
+                      <span>{tr("Sun")}</span>
                       <span className="bar">
                         <i style={{ width: compare[i].sunPct + "%", background: C.amber }} />
                       </span>
                       <span className="v">{compare[i].sunPct.toFixed(0)}%</span>
-                      <span>Earth</span>
+                      <span>{tr("Earth")}</span>
                       <span className="bar">
                         <i style={{ width: compare[i].commsPct + "%", background: C.cyan }} />
                       </span>
                       <span className="v">{compare[i].commsPct.toFixed(0)}%</span>
-                      <span>Longest night</span>
+                      <span>{tr("Longest night")}</span>
                       <span />
                       <span className="v">{compare[i].longestNightH} h</span>
                     </span>
@@ -2025,6 +2045,7 @@ export default function App() {
                 </React.Fragment>
               ))}
               <form
+                style={moreSites ? undefined : { display: "none" }}
                 className="custom"
                 onSubmit={(e) => {
                   e.preventDefault();
@@ -2075,18 +2096,18 @@ export default function App() {
         <div className="col">
           <div className="tiles">
             <div className={"tile s-" + sunTone}>
-              <span className="k">Sun</span>
-              <span className={"pill " + (sunTone === "slate" ? "dim" : sunTone)}>{sunState}</span>
+              <span className="k">{tr("Sun")}</span>
+              <span className={"pill " + (sunTone === "slate" ? "dim" : sunTone)}>{tr(sunState)}</span>
               <span className="big">
-                {sgn(now.sunEl, 2)}°<small>elevation</small>
+                {sgn(now.sunEl, 2)}°<small>{tr("elevation")}</small>
               </span>
               <span className="sub">
-                {sunEvt.active ? "Sunset in " : "Sunrise in "}
+                {tr(sunEvt.active ? "Sunset in " : "Sunrise in ")}
                 <b>{sunEvt.hours === null ? "30 d+" : fmtDur(sunEvt.hours)}</b>
               </span>
             </div>
             <div className={"tile s-" + (now.powerW >= power.loadW ? "amber" : "crimson")}>
-              <span className="k">Array power</span>
+              <span className="k">{tr("Array power")}</span>
               <span className="big">
                 {now.powerW.toFixed(0)}
                 <small>W</small>
@@ -2099,7 +2120,7 @@ export default function App() {
               </span>
             </div>
             <div className={"tile s-" + (socPct < 20 ? "crimson" : socPct < 50 ? "orange" : "cyan")}>
-              <span className="k">Battery state of charge</span>
+              <span className="k">{tr("Battery state of charge")}</span>
               <span className={"big " + socClass}>
                 <NumberRoll value={socPct} />
                 <small>%</small>
@@ -2113,13 +2134,13 @@ export default function App() {
               </span>
             </div>
             <div className={"tile s-" + lockTone}>
-              <span className="k">Direct-to-Earth link</span>
-              <span className={"pill " + lockTone}>{lockLabel}</span>
+              <span className="k">{tr("Direct-to-Earth link")}</span>
+              <span className={"pill " + lockTone}>{tr(lockLabel)}</span>
               <span className="big">
-                {sgn(now.earthClearance, 1)}°<small>clear</small>
+                {sgn(now.earthClearance, 1)}°<small>{tr("clear")}</small>
               </span>
               <span className="sub">
-                {earthEvt.active ? "Earthset in " : "Earthrise in "}
+                {tr(earthEvt.active ? "Earthset in " : "Earthrise in ")}
                 <b>{earthEvt.hours === null ? "30 d+" : fmtDur(earthEvt.hours)}</b>
                 {!explorer && isFinite(now.linkMarginDb) && <> · margin <b>{sgn(now.linkMarginDb, 1)} dB</b></>}
               </span>
@@ -2145,7 +2166,7 @@ export default function App() {
             right={
               <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 <button className="btn small" onClick={copyCsv}>
-                  {copied ? "Copied ✓" : "Copy CSV"}
+                  {copied ? "Copied ✓" : tr("Copy CSV")}
                 </button>
                 {canDownload && (
                   <button className="btn small" onClick={downloadCsv}>
@@ -2153,14 +2174,14 @@ export default function App() {
                   </button>
                 )}
                 <button className="btn small" onClick={play} disabled={running}>
-                  {playing ? "■ Stop" : "▶ Play 30 days"}
+                  {playing ? "■ Stop" : tr("▶ Play 30 days")}
                 </button>
               </span>
             }
           >
             <div className="controls">
               <label className="field">
-                Planned landing (UTC)
+                {tr("Planned landing (UTC)")}
                 <input
                   id="base-date"
                   type="date"
@@ -2179,7 +2200,7 @@ export default function App() {
                 />
               </label>
               <label className="field">
-                Solar array
+                {tr("Solar array")}
                 <select id="tracking" value={power.tracking} disabled={!!crisis} onChange={(e) => setTracking(e.target.value as P.Tracking)}>
                   <option value="vertical">Vertical, Sun-tracking · cos(El)</option>
                   <option value="horizontal">Flat deck · sin(El)</option>
@@ -2241,7 +2262,7 @@ export default function App() {
             )}
           </Panel>
 
-          <Panel title="Landing window finder · next 12 months" tag="14-day surface mission">
+          <Panel fold title="Landing window finder · next 12 months" tag="14-day surface mission">
             <WindowFinder scan={scan} startMs={scanStart} onPick={pickDate} />
             <p className="dim" style={{ margin: 0, fontSize: 12 }}>
               Each column is a landing date at the current lander position. Brighter means more of the following 14 days
@@ -2251,17 +2272,18 @@ export default function App() {
           </Panel>
 
           <Panel
+            fold
             title="Scenario comparison"
             right={
               <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 <button className="btn small" onClick={shareLink}>
-                  {linkMsg || "Copy share link"}
+                  {linkMsg || tr("Copy share link")}
                 </button>
                 <button className="btn small" onClick={copyBrief}>
-                  {briefCopied ? "Copied ✓" : "Copy site brief"}
+                  {briefCopied ? "Copied ✓" : tr("Copy site brief")}
                 </button>
                 <button className="btn small glow" onClick={pinNow}>
-                  + Pin current scenario
+                  {tr("+ Pin current scenario")}
                 </button>
               </span>
             }
@@ -2339,7 +2361,7 @@ export default function App() {
             )}
           </Panel>
 
-          <Panel title="South pole from above" tag="80°S to pole">
+          <Panel fold title="South pole from above" tag="80°S to pole">
             <PolarView eph={ephNow} siteId={siteId} />
             {explorer ? (
               <p className="callout">
@@ -2412,7 +2434,7 @@ export default function App() {
             </Panel>
           )}
 
-          <Panel title="Lander configuration" tag="Your vehicle">
+          <Panel fold title="Lander configuration" tag="Your vehicle">
             <div className="cfg">
               {([
                 ["arrayW", "Solar array (W)", 10, 100000, 10],
@@ -2459,9 +2481,9 @@ export default function App() {
       </footer>
 
       <div className="survival" role="group" aria-label="Survival gauges" style={appMode === "game" ? { display: "none" } : undefined}>
-        <Gauge label="Battery / thermal" value={soc} tone={socPct < 20 ? C.crimson : socPct < 50 ? "#FF9A62" : C.cyan} text={socPct + "%"} />
-        <Gauge label="Comms link quality" value={now.lock === "BLACKOUT" ? 0 : P.clamp(now.linkMarginDb / 9.6, 0.12, 1)} tone={now.lock === "LOCK" ? C.cyan : C.blue} text={now.lock === "BLACKOUT" ? "NO LINK" : Math.round((now.lock === "BLACKOUT" ? 0 : P.clamp(now.linkMarginDb / 9.6, 0.12, 1)) * 100) + "%"} />
-        <Gauge label="Solar efficiency" value={now.sunFrac * now.cosEff} tone={C.amber} text={Math.round(now.sunFrac * now.cosEff * 100) + "%"} />
+        <Gauge label={tr("Battery / thermal")} value={soc} tone={socPct < 20 ? C.crimson : socPct < 50 ? "#FF9A62" : C.cyan} text={socPct + "%"} />
+        <Gauge label={tr("Comms link quality")} value={now.lock === "BLACKOUT" ? 0 : P.clamp(now.linkMarginDb / 9.6, 0.12, 1)} tone={now.lock === "LOCK" ? C.cyan : C.blue} text={now.lock === "BLACKOUT" ? "NO LINK" : Math.round((now.lock === "BLACKOUT" ? 0 : P.clamp(now.linkMarginDb / 9.6, 0.12, 1)) * 100) + "%"} />
+        <Gauge label={tr("Solar efficiency")} value={now.sunFrac * now.cosEff} tone={C.amber} text={Math.round(now.sunFrac * now.cosEff * 100) + "%"} />
         <div className="warns">
           {crisis?.phase === "lost" && <span className="pulse-crit">LOSS OF VEHICLE</span>}
           {sunEvt.active && sunEvt.hours !== null && sunEvt.hours < 12 && <span className="pulse-crit">ECLIPSE IMMINENT</span>}
@@ -2473,5 +2495,6 @@ export default function App() {
       {briefing && <Briefing lang={lang} onClose={() => setBriefing(false)} />}
       {showProv && <Provenance onClose={() => setShowProv(false)} />}
     </div>
+    </LangCtx.Provider>
   );
 }

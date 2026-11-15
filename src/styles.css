@@ -469,3 +469,27 @@ input[type="range"]::-webkit-slider-thumb { width: 18px; height: 18px; margin-to
 .verdict.ok { color: var(--mint); } .verdict.bad { color: #9cc4ff; }
 .check { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--dim); }
 .check input { margin-top: 2px; accent-color: #8b7cff; }
+
+/* ---- v9: calmer layout, collapsible panels ---- */
+.tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 1560px) { .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.tile .big { white-space: normal; font-size: 25px; }
+.tile .big small { white-space: nowrap; }
+.tile { overflow: visible; }
+.foldbtn { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 10px; flex: 1; min-width: 0; border-radius: 8px; }
+.foldbtn:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; }
+.foldbtn .chev { margin-left: auto; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line-2); display: grid; place-items: center; color: var(--dim); font-family: var(--mono); font-size: 14px; flex: none; }
+.foldbtn:hover .chev { border-color: var(--violet); color: #fff; }
+.panel.folded { padding-top: 12px; padding-bottom: 12px; }
+.panel.folded .tag { display: none; }
+.morebtn { all: unset; cursor: pointer; display: flex; justify-content: space-between; align-items: center; padding: 9px 12px; border: 1px dashed var(--line-2); border-radius: 12px; font-size: 12px; color: var(--dim); }
+.morebtn:hover { color: #fff; border-color: var(--violet); }
+.morebtn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+/* a quieter blackout: readable instrument, clear label, no heavy static */
+.reticle.glitch svg { filter: none; animation: none; opacity: 0.8; }
+.reticle.glitch .noise { opacity: 0.07; animation: noise 0.5s steps(3) infinite; }
+.reticle.glitch .scan { opacity: 0.35; }
+.reticle .lost { place-items: start center !important; padding-top: 14px; }
+.reticle .lost span { background: rgba(255, 92, 122, 0.92); border-radius: 999px; font-size: 11px; padding: 4px 12px; animation: none; }
+.top { row-gap: 10px; }
+.cmp td:first-child { min-width: 180px; }
