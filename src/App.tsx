@@ -847,7 +847,7 @@ function Provenance({ onClose }: { onClose: () => void }) {
         <section>
           <h3>2 · Topography &amp; horizon masks · NASA LRO LOLA</h3>
           <p>
-            The three south-pole sites use Lunar Orbiter Laser Altimeter gridded elevation from the NASA PDS
+            The four south-pole sites use Lunar Orbiter Laser Altimeter gridded elevation from the NASA PDS
             Geosciences Node: <span className="mono">LDEM_80S_20M</span> (20 m per pixel) around the lander and{" "}
             <span className="mono">LDEM_75S_240M</span> (240 m per pixel) out to 300 km. For each of the 441 lander
             positions and every 1° of azimuth, a ray is marched over the curved Moon from 2 m above the surface and the
@@ -894,6 +894,26 @@ function Provenance({ onClose }: { onClose: () => void }) {
               CSA Moon Exploration Details
             </a>
           </div>
+        </section>
+        <section>
+          <h3>Validation benchmarks</h3>
+          <ul>
+            <li>
+              <b>Ephemeris vs JPL Horizons:</b> 16 dates, Feb to May 2027. Largest differences: sub-Earth point 0.04°,
+              sub-solar point 0.06°, range 190 km.
+            </li>
+            <li>
+              <b>Illumination vs published LOLA modelling:</b> the sunniest cell of this tool's Shackleton ridge patch is
+              lit 90.9% of 2027 to 2028 (2 m mast, any part of the solar disc). Gläser et al. report 88.0% as the
+              highest average at surface level on the same ridge. The mast height and partial-disc rule both push this
+              tool's figure up slightly.
+            </li>
+            <li>
+              <b>IM-2 hindcast:</b> for the Athena landing site at about 17:30 UTC on 6 March 2025 the tool reports the
+              Sun 2.5° above the horizon and unobstructed, Earth 12° clear of the terrain, and a 3.6° slope. The lander
+              came to rest on its side in a small crater, a hazard below the 20 m resolution of the terrain data.
+            </li>
+          </ul>
         </section>
         <section>
           <h3>Lander assumptions (illustrative)</h3>
@@ -1040,9 +1060,9 @@ function PolarView({ eph, siteId }: { eph: P.Ephemeris; siteId: string }) {
             )}
             <circle cx={x} cy={y} r={on ? 4.5 : 3} fill={on ? "#fff" : "#94A3B8"} />
             <text
-              x={s.id === "malapert" ? x - 8 : x + 8}
-              y={s.id === "mouton" ? y - 5 : y + 4}
-              textAnchor={s.id === "malapert" ? "end" : "start"}
+              x={s.id === "malapert" || s.id === "athena" ? x - 8 : x + 8}
+              y={s.id === "mouton" ? y - 5 : s.id === "athena" ? y + 12 : y + 4}
+              textAnchor={s.id === "malapert" || s.id === "athena" ? "end" : "start"}
               fontSize={10}
               style={{ fill: on ? "#fff" : C.dim, fontSize: 10 }}
             >
@@ -1136,6 +1156,7 @@ export default function App() {
     shackleton: { ix: 10, iy: 3 },
     malapert: { ix: 10, iy: 10 },
     mouton: { ix: 10, iy: 10 },
+    athena: { ix: 10, iy: 10 },
     chandrayaan3: { ix: 10, iy: 10 },
     apollo11: { ix: 10, iy: 10 },
     custom: { ix: 10, iy: 10 },
@@ -1166,6 +1187,7 @@ export default function App() {
   const [appMode, setAppMode] = useState<"planner" | "game">("planner");
   const [pins, setPins] = useState<Pin[]>([]);
   const [copied, setCopied] = useState(false);
+  const [briefCopied, setBriefCopied] = useState(false);
   const [feed, setFeed] = useState<"checking" | "live" | "local">("checking");
   const [ephV, setEphV] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -1435,6 +1457,43 @@ export default function App() {
     setNudges((n) => ({ ...n, [p.siteId]: p.cell }));
     setBaseUser(p.baseMs);
     setDelayRaw(p.delay);
+  };
+  const copyBrief = () => {
+    const best = P.bestWindows(scan);
+    const lines = [
+      "LUNAR LANDING SITE BRIEF",
+      `Site: ${site.name} (${Math.abs(site.lat).toFixed(4)}°${site.lat < 0 ? "S" : "N"}, ${site.lon.toFixed(4)}°E)`,
+      `Lander position: ${sgn(dE, 0)} m east, ${sgn(dN, 0)} m north of site centre; elevation ${sgn(Z[cell.iy][cell.ix], 0)} m`,
+      `Epoch: ${fmtDate(tNow)} UTC (${P.seasonLabel(ephNow.subSolarLat)})`,
+      "",
+      "AT EPOCH",
+      `Sun: elevation ${sgn(now.sunEl)}°, azimuth ${now.sunAz.toFixed(1)}°, ${sunState}; ${sunEvt.active ? "sunset" : "sunrise"} in ${sunEvt.hours === null ? "30 d+" : fmtDur(sunEvt.hours)}`,
+      `Array power: ${now.powerW.toFixed(0)} W against ${power.loadW} W load`,
+      `Earth: ${sgn(now.earthClearance, 1)}° over terrain, ${lockLabel}; ${earthEvt.active ? "Earthset" : "Earthrise"} in ${earthEvt.hours === null ? "30 d+" : fmtDur(earthEvt.hours)}`,
+      "",
+      "NEXT 30 DAYS",
+      `Sunlit ${st.sunPct.toFixed(0)}%, longest night ${st.longestNightH} h`,
+      `Earth link ${st.commsPct.toFixed(0)}%, longest blackout ${fmtDur(st.longestBlackoutH)}`,
+      `Battery low point ${(st.minSoc * 100).toFixed(0)}%`,
+      "",
+      "LANDING SURFACE",
+      site.terrain ? `${surface}: max slope ${slopeHere.toFixed(1)}°, mean ${slopeMean.toFixed(1)}°, roughness ${roughHere.toFixed(1)} m (20 m baseline)` : "No terrain loaded",
+      "",
+      "BEST 14-DAY LANDING WINDOWS, NEXT 12 MONTHS",
+      ...best.map((d, i) => `${i + 1}. ${fmtDay(scanStart + d * DAY)}: Sun ${scan.sunPct[d].toFixed(0)}%, Earth ${scan.earthPct[d].toFixed(0)}%, longest eclipse ${scan.nightH[d].toFixed(0)} h`),
+      "",
+      `Sources: ${feed === "live" ? "JPL Horizons live feed" : "analytic ephemeris (within 0.06° of JPL Horizons)"}; NASA LRO LOLA LDEM_80S_20M and LDEM_75S_240M.`,
+      "Lander power and link figures are illustrative assumptions.",
+    ];
+    try {
+      navigator.clipboard.writeText(lines.join("\n")).then(
+        () => {
+          setBriefCopied(true);
+          setTimeout(() => setBriefCopied(false), 1600);
+        },
+        () => {}
+      );
+    } catch {}
   };
   const copyCsv = () => {
     try {
@@ -1827,7 +1886,7 @@ export default function App() {
               {allSites.map((s, i) => (
                 <React.Fragment key={s.id}>
                   {i === 0 && <div className="grp-label">South pole · LOLA terrain</div>}
-                  {i === 3 && <div className="grp-label">Reference sites · smooth sphere</div>}
+                  {i === 4 && <div className="grp-label">Reference sites · smooth sphere</div>}
                   <button className="site" aria-pressed={s.id === siteId} onClick={() => pickSite(s.id)} disabled={!!crisis}>
                     <span className="nm">{s.name}</span>
                     <span className="co">
@@ -1877,6 +1936,16 @@ export default function App() {
                 </button>
               </form>
             </div>
+            {site.id === "athena" && (
+              <p className="callout">
+                <b>Hindcast.</b> {site.note} Load the landing time to see what this tool reports for that moment. The
+                crater that caught the lander is smaller than the 20 m terrain data can show, which is the limit of
+                any map-based check.{" "}
+                <button className="lnk" onClick={() => pickDate(Date.parse("2025-03-06T17:30:00Z"))}>
+                  Load 6 Mar 2025, about 17:30 UTC
+                </button>
+              </p>
+            )}
             {explorer && <p className="callout">{site.note} Bars compare every site at its current lander position.</p>}
           </Panel>
         </div>
@@ -2057,9 +2126,14 @@ export default function App() {
           <Panel
             title="Scenario comparison"
             right={
-              <button className="btn small glow" onClick={pinNow}>
-                + Pin current scenario
-              </button>
+              <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button className="btn small" onClick={copyBrief}>
+                  {briefCopied ? "Copied ✓" : "Copy site brief"}
+                </button>
+                <button className="btn small glow" onClick={pinNow}>
+                  + Pin current scenario
+                </button>
+              </span>
             }
           >
             <div style={{ overflowX: "auto" }}>

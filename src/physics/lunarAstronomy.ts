@@ -46,6 +46,8 @@ export const SITES: Site[] = [
     note: "High nearside massif on the 0° meridian, facing Earth." },
   { id: "mouton", name: "Mons Mouton", short: "Mons Mouton", lat: -84.6, lon: 31.0, terrain: true,
     note: "Broad flat-topped mountain, a target region for CLPS deliveries." },
+  { id: "athena", name: "IM-2 Athena landing site", short: "IM-2 Athena", lat: -84.7906, lon: 29.1957, terrain: true,
+    note: "Intuitive Machines IM-2, a NASA CLPS delivery, touched down here on 6 March 2025 about 250 m from its target and came to rest on its side in a crater." },
   { id: "chandrayaan3", name: "Chandrayaan-3 · Shiv Shakti", short: "Chandrayaan-3", lat: -69.373, lon: 32.319, terrain: false,
     note: "ISRO landing site, August 2023. No terrain loaded: horizon is a smooth sphere." },
   { id: "apollo11", name: "Apollo 11 · Tranquility Base", short: "Apollo 11", lat: 0.674, lon: 23.473, terrain: false,

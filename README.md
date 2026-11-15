@@ -10,11 +10,13 @@ is the Sun above the local horizon (power), and is Earth above it (direct-to-Ear
 - Computes Sun and Earth azimuth/elevation at a site for any date (analytic ephemeris, checked against JPL Horizons
   to within 0.06 deg on 16 dates in Feb-May 2027).
 - Uses real NASA LRO LOLA terrain (LDEM_80S_20M and LDEM_75S_240M) to build a horizon mask for 441 lander positions
-  at each of three south-pole sites: Shackleton Connecting Ridge, Malapert Massif, Mons Mouton.
+  at each of four south-pole sites: Shackleton Connecting Ridge, Malapert Massif, Mons Mouton, and the IM-2 Athena
+  landing site (a real CLPS landing, 6 March 2025).
 - Simulates 30 days of sunlight, Earth link and battery charge, with time to next sunset / Earthset.
 - Lets you nudge the lander in 100 m steps, slip the launch date by up to 30 days, and compare sites side by side.
 - Landing window finder: scans the next 12 months for the best 14-day landing dates at the chosen position.
 - Scenario comparison: pin site/position/date combinations and compare them side by side.
+- Copyable plain-text site brief for handing a scenario to another team.
 - One-click best-cell search, CSV export of the 30-day timeline, and a top-down polar view of sunlight and Earth direction.
 - Landing-surface check: slope and roughness of every 100 m cell from the 20 m LOLA data, with a hazard overlay
   (flat up to 8 deg, caution to 15 deg, hazard above).
@@ -24,6 +26,14 @@ is the Sun above the local horizon (power), and is Earth above it (direct-to-Ear
 - Tries a live JPL Horizons feed for the chosen date and falls back to the built-in engine if the call is blocked.
 - Three survival gauges (battery, comms link, solar efficiency), a guided tour and a 15-second "crisis triage" game
   with a 5-nudge fuel budget and a 14-day survival test.
+
+## Validation
+
+| Check | Result |
+|---|---|
+| Sun and Earth positions vs JPL Horizons (16 dates, Feb-May 2027) | Sub-Earth point within 0.04 deg, sub-solar point within 0.06 deg, range within 190 km |
+| Illumination vs published LOLA modelling (Glaser et al. 2018) | Sunniest cell on the Shackleton ridge patch: 90.9% over 2027-2028 here, against 88.0% published maximum average at surface level on the same ridge |
+| IM-2 Athena hindcast (6 March 2025, about 17:30 UTC) | Tool reports Sun 2.5 deg up and unobstructed, Earth 12 deg clear, 3.6 deg slope. The lander tipped in a small crater below the 20 m data resolution |
 
 ## Run it
 
