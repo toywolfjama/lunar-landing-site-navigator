@@ -301,3 +301,7 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
 .tile.s-amber, .tile.s-cyan, .tile.s-crimson { box-shadow: 0 12px 30px -18px rgba(0, 0, 0, 0.8); }
 .panel-head h2 { color: #a8b3c7; }
 .tag { border-radius: 4px; }
+
+.timectl { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.timectl input { background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 6px; padding: 6px 8px; font-size: 12px; font-family: var(--mono); color-scheme: dark; }
+.seg button:disabled { opacity: 0.45; cursor: not-allowed; }

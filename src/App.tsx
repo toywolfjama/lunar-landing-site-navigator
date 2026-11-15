@@ -1087,13 +1087,26 @@ export default function App() {
     apollo11: { ix: 10, iy: 10 },
     custom: { ix: 10, iy: 10 },
   });
-  const [baseMs, setBaseMs] = useState(Date.parse("2027-05-06T00:00:00Z"));
+  const nowMinute = () => Math.floor(Date.now() / 60000) * 60000;
+  const [baseMs, setBaseMs] = useState(nowMinute);
+  const [timeMode, setTimeMode] = useState<"now" | "set">("now");
+  const setBaseUser = (ms: number) => {
+    setTimeMode("set");
+    setBaseMs(ms);
+  };
+  // In NOW mode the simulation follows the real clock, refreshed every 10 minutes.
+  useEffect(() => {
+    if (timeMode !== "now") return;
+    setBaseMs(nowMinute());
+    const id = setInterval(() => setBaseMs(nowMinute()), 600000);
+    return () => clearInterval(id);
+  }, [timeMode]);
   const [delayRaw, setDelayRaw] = useState(0);
   const delay = useDebounced(delayRaw, 20);
   const [mode, setMode] = useState<Mode>("engineer");
   const [tracking, setTracking] = useState<P.Tracking>("vertical");
   const [overlay, setOverlay] = useState<Overlay>("month");
-  const [beat, setBeat] = useState<number | null>(1);
+  const [beat, setBeat] = useState<number | null>(null);
   const [crisis, setCrisis] = useState<Crisis | null>(null);
   const [showProv, setShowProv] = useState(false);
   const [briefing, setBriefing] = useState(true);
@@ -1241,13 +1254,13 @@ export default function App() {
     setTracking("vertical");
     if (n === 1) {
       setSiteId("shackleton");
-      setBaseMs(Date.parse("2027-05-06T00:00:00Z"));
+      setBaseUser(Date.parse("2027-05-06T00:00:00Z"));
       setDelayRaw(0);
       setNudges((s) => ({ ...s, shackleton: { ix: 10, iy: 3 } }));
       setOverlay("month");
     } else if (n === 2) {
       setSiteId("shackleton");
-      setBaseMs(Date.parse("2027-02-14T00:00:00Z"));
+      setBaseUser(Date.parse("2027-02-14T00:00:00Z"));
       setDelayRaw(0);
       setNudges((s) => ({ ...s, shackleton: { ix: 12, iy: 2 } }));
       setOverlay("sun");
@@ -1255,7 +1268,7 @@ export default function App() {
       timers.current.push(setTimeout(() => setNudges((s) => ({ ...s, shackleton: { ix: 10, iy: 2 } })), 3400));
     } else if (n === 3) {
       setSiteId("mouton");
-      setBaseMs(Date.parse("2027-02-16T00:00:00Z"));
+      setBaseUser(Date.parse("2027-02-16T00:00:00Z"));
       setDelayRaw(0);
       setNudges((s) => ({ ...s, mouton: { ix: 10, iy: 10 } }));
       setOverlay("earth");
@@ -1332,7 +1345,7 @@ export default function App() {
     if (crisis) return;
     clearTimers();
     setBeat(null);
-    setBaseMs(ms);
+    setBaseUser(ms);
     setDelayRaw(0);
   };
   const findBest = () => {
@@ -1363,7 +1376,7 @@ export default function App() {
     if (p.siteId === "custom" && siteId !== "custom") return;
     setSiteId(p.siteId);
     setNudges((n) => ({ ...n, [p.siteId]: p.cell }));
-    setBaseMs(p.baseMs);
+    setBaseUser(p.baseMs);
     setDelayRaw(p.delay);
   };
   const copyCsv = () => {
@@ -1440,11 +1453,49 @@ export default function App() {
         </div>
         <div className="clock">
           <div>
-            SIM UTC <b>{fmtDate(tNow)}</b>
+            {timeMode === "now" && delay === 0 ? "LIVE UTC" : "SIM UTC"} <b>{fmtDate(tNow)}</b>
           </div>
           <div>
             {P.seasonLabel(now ? P.ephemeris(tNow).subSolarLat : 0)} · T+{delay.toFixed(1)} d
           </div>
+        </div>
+        <div className="timectl">
+          <div className="seg" role="group" aria-label="Simulation time">
+            <button
+              aria-pressed={timeMode === "now"}
+              disabled={!!crisis}
+              onClick={() => {
+                clearTimers();
+                setBeat(null);
+                setDelayRaw(0);
+                setTimeMode("now");
+              }}
+            >
+              Now
+            </button>
+            <button aria-pressed={timeMode === "set"} disabled={!!crisis} onClick={() => setTimeMode("set")}>
+              Set time
+            </button>
+          </div>
+          {timeMode === "set" && (
+            <input
+              id="sim-time"
+              type="datetime-local"
+              aria-label="Simulation start time, UTC"
+              value={new Date(baseMs).toISOString().slice(0, 16)}
+              min="2020-01-01T00:00"
+              max="2045-12-31T23:59"
+              disabled={!!crisis}
+              onChange={(e) => {
+                const t = Date.parse(e.target.value + ":00Z");
+                if (!isNaN(t)) {
+                  clearTimers();
+                  setBeat(null);
+                  setBaseUser(t);
+                }
+              }}
+            />
+          )}
         </div>
         <div className={"feed " + feed} title={feed === "live" ? "Sun and Earth positions from JPL Horizons" : "Sun and Earth positions from the built-in ephemeris engine"}>
           <i />
@@ -1792,7 +1843,7 @@ export default function App() {
                     if (!isNaN(t)) {
                       clearTimers();
                       setBeat(null);
-                      setBaseMs(t);
+                      setBaseUser(t);
                     }
                   }}
                 />
