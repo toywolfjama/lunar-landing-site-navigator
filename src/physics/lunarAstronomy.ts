@@ -166,7 +166,7 @@ export function ephemeris(unixMs: number): Ephemeris {
   const betaH = ratio * beta;
   const sun = selenographic(lambdaH, betaH, Omega, Fdeg);
 
-  return {
+  const out: Ephemeris = {
     subSolarLon: sun.lon,
     subSolarLat: sun.lat,
     subEarthLon: earth.lon,
@@ -174,6 +174,60 @@ export function ephemeris(unixMs: number): Ephemeris {
     earthDistKm,
     sunDistKm,
   };
+  // Live JPL Horizons table, when one has been loaded for this time range, replaces the analytic values.
+  const tb = liveTable;
+  if (tb && unixMs >= tb.t0 && unixMs <= tb.t0 + (tb.n - 1) * tb.stepMs) {
+    const f = (unixMs - tb.t0) / tb.stepMs;
+    const i = Math.min(tb.n - 2, Math.floor(f));
+    const w = f - i;
+    const a = i * 5;
+    const b = a + 5;
+    const r = tb.rows;
+    out.subEarthLon = norm180(r[a] + norm180(r[b] - r[a]) * w);
+    out.subEarthLat = r[a + 1] + (r[b + 1] - r[a + 1]) * w;
+    out.subSolarLon = norm180(r[a + 2] + norm180(r[b + 2] - r[a + 2]) * w);
+    out.subSolarLat = r[a + 3] + (r[b + 3] - r[a + 3]) * w;
+    out.earthDistKm = r[a + 4] + (r[b + 4] - r[a + 4]) * w;
+  }
+  return out;
+}
+
+/* Live ephemeris table (JPL Horizons observer quantities 14, 15, 20 for the Moon, geocentric). */
+export interface EphemerisTable {
+  t0: number;
+  stepMs: number;
+  n: number;
+  rows: Float64Array; // n x [subEarthLon, subEarthLat, subSolarLon, subSolarLat, earthDistKm]
+}
+let liveTable: EphemerisTable | null = null;
+export function setEphemerisTable(t: EphemerisTable | null): void {
+  liveTable = t;
+}
+
+export function horizonsUrl(startMs: number, days: number): string {
+  const d = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
+  const q: Record<string, string> = {
+    format: "text", COMMAND: "'301'", OBJ_DATA: "'NO'", MAKE_EPHEM: "'YES'", EPHEM_TYPE: "'OBSERVER'", CENTER: "'500@399'",
+    START_TIME: `'${d(startMs)}'`, STOP_TIME: `'${d(startMs + days * 86400000)}'`, STEP_SIZE: "'1 h'", QUANTITIES: "'14,15,20'", CSV_FORMAT: "'YES'",
+  };
+  return "https://ssd.jpl.nasa.gov/api/horizons.api?" + Object.keys(q).map((k) => k + "=" + encodeURIComponent(q[k])).join("&");
+}
+
+/** Parse a Horizons CSV response (hourly rows starting at startMs). Returns null if it does not look right. */
+export function parseHorizons(text: string, startMs: number): EphemerisTable | null {
+  const a = text.indexOf("$$SOE");
+  const b = text.indexOf("$$EOE");
+  if (a < 0 || b < a) return null;
+  const lines = text.slice(a + 5, b).split("\n").map((l) => l.trim()).filter(Boolean);
+  if (lines.length < 48) return null;
+  const rows = new Float64Array(lines.length * 5);
+  for (let i = 0; i < lines.length; i++) {
+    const c = lines[i].split(",");
+    const v = [parseFloat(c[3]), parseFloat(c[4]), parseFloat(c[5]), parseFloat(c[6]), parseFloat(c[7]) * AU_KM];
+    if (v.some((x) => !isFinite(x))) return null;
+    rows.set(v, i * 5);
+  }
+  return { t0: startMs, stepMs: 3600000, n: lines.length, rows };
 }
 
 /* ------------------------------------------------------------------ */
@@ -595,4 +649,27 @@ export function seasonLabel(subSolarLat: number): string {
   if (subSolarLat < -0.5) return "South-polar summer";
   if (subSolarLat > 0.5) return "South-polar winter";
   return "Near equinox";
+}
+
+/** Per-cell outlook over a window: longest continuous eclipse (h) and share of time Earth is in view (%). */
+export function surveyWindow(site: Site, startMs: number, hours = 336) {
+  const skies: Sky[] = [];
+  for (let i = 0; i <= hours; i++) skies.push(localSky(site, startMs + i * 3600000));
+  const maxEclipseH = new Float32Array(GRID_N * GRID_N);
+  const earthPct = new Float32Array(GRID_N * GRID_N);
+  for (let iy = 0; iy < GRID_N; iy++)
+    for (let ix = 0; ix < GRID_N; ix++) {
+      const prof = horizonProfile(site, ix, iy);
+      let run = 0;
+      let longest = 0;
+      let vis = 0;
+      for (const s of skies) {
+        if (s.sunEl + s.sunRadius * 0.9 > horizonAt(prof, s.sunAz)) run = 0;
+        else if (++run > longest) longest = run;
+        if (s.earthEl > horizonAt(prof, s.earthAz)) vis++;
+      }
+      maxEclipseH[iy * GRID_N + ix] = longest;
+      earthPct[iy * GRID_N + ix] = (100 * vis) / skies.length;
+    }
+  return { maxEclipseH, earthPct };
 }

@@ -14,11 +14,14 @@ is the Sun above the local horizon (power), and is Earth above it (direct-to-Ear
 - Simulates 30 days of sunlight, Earth link and battery charge, with time to next sunset / Earthset.
 - Lets you nudge the lander in 100 m steps, slip the launch date by up to 30 days, and compare sites side by side.
 - Flight Engineer mode (raw telemetry) and Explorer mode (plain-English explanations).
-- Guided tour and a 15-second "crisis triage" game for demos.
+- Tries a live JPL Horizons feed for the chosen date and falls back to the built-in engine if the call is blocked.
+- Three survival gauges (battery, comms link, solar efficiency), a guided tour and a 15-second "crisis triage" game
+  with a 5-nudge fuel budget and a 14-day survival test.
 
 ## Run it
 
-Open `index.html` in a browser. It is one self-contained file and needs no server and no network.
+Open `index.html` in a browser. It is one self-contained file and needs no server. It works offline; with a
+network it also tries the live JPL Horizons feed.
 
 ## Source
 
@@ -54,4 +57,6 @@ node build.mjs
 
 ## Use of AI
 
-This project was built with the help of Claude (Anthropic), including code generation and data extraction.
+This prototype's architecture, React components and data pipeline were generated with AI (Claude Fable 5.2,
+Anthropic). The terrain is NASA LOLA data, not AI-generated. The app footer and the top of `src/App.tsx` carry the
+same disclosure.
