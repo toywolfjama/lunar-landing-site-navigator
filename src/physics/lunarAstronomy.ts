@@ -673,3 +673,68 @@ export function surveyWindow(site: Site, startMs: number, hours = 336) {
     }
   return { maxEclipseH, earthPct };
 }
+
+export interface YearScan {
+  days: number;
+  missionDays: number;
+  sunPct: Float32Array; // per start day: share of the mission sunlit
+  earthPct: Float32Array; // per start day: share of the mission with Earth in view
+  nightH: Float32Array; // per start day: longest continuous eclipse during the mission, hours
+  score: Float32Array; // 0..100, higher is better
+}
+
+/** For every start day in the next `days`, how a surface mission of `missionDays` would fare at this position. */
+export function scanYear(site: Site, profile: Float32Array, startMs: number, days = 365, missionDays = 14): YearScan {
+  const n = (days + missionDays) * 24 + 1;
+  const lit = new Uint8Array(n);
+  const vis = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const s = localSky(site, startMs + i * 3600000);
+    lit[i] = s.sunEl + s.sunRadius * 0.9 > horizonAt(profile, s.sunAz) ? 1 : 0;
+    vis[i] = s.earthEl > horizonAt(profile, s.earthAz) ? 1 : 0;
+  }
+  const w = missionDays * 24;
+  const sunPct = new Float32Array(days);
+  const earthPct = new Float32Array(days);
+  const nightH = new Float32Array(days);
+  const score = new Float32Array(days);
+  for (let d = 0; d < days; d++) {
+    let a = 0;
+    let b = 0;
+    let run = 0;
+    let longest = 0;
+    for (let i = d * 24; i < d * 24 + w; i++) {
+      a += lit[i];
+      b += vis[i];
+      if (lit[i]) run = 0;
+      else if (++run > longest) longest = run;
+    }
+    sunPct[d] = (100 * a) / w;
+    earthPct[d] = (100 * b) / w;
+    nightH[d] = longest;
+    score[d] = Math.max(0, 0.5 * sunPct[d] + 0.5 * earthPct[d] - Math.max(0, longest - 24) * 0.6);
+  }
+  return { days, missionDays, sunPct, earthPct, nightH, score };
+}
+
+/** Best non-overlapping start days from a year scan. */
+export function bestWindows(scan: YearScan, count = 3, minGapDays = 20): number[] {
+  const picks: number[] = [];
+  const order = Array.from({ length: scan.days }, (_, i) => i).sort((a, b) => scan.score[b] - scan.score[a]);
+  for (const d of order) {
+    if (picks.every((p) => Math.abs(p - d) >= minGapDays)) picks.push(d);
+    if (picks.length >= count) break;
+  }
+  return picks;
+}
+
+/** CSV export of a simulated timeline. */
+export function timelineCsv(site: Site, tl: Timeline): string {
+  const rows = ["utc,sun_az_deg,sun_el_deg,sun_horizon_deg,sun_disc_visible,array_power_w,battery_soc,earth_az_deg,earth_el_deg,earth_horizon_deg,earth_clearance_deg,link_state,link_margin_db"];
+  for (const s of tl.samples)
+    rows.push([
+      new Date(s.t).toISOString(), s.sunAz.toFixed(3), s.sunEl.toFixed(3), s.sunHorizon.toFixed(2), s.sunFrac.toFixed(3), s.powerW.toFixed(1), s.soc.toFixed(3),
+      s.earthAz.toFixed(3), s.earthEl.toFixed(3), s.earthHorizon.toFixed(2), s.earthClearance.toFixed(3), s.lock, isFinite(s.linkMarginDb) ? s.linkMarginDb.toFixed(1) : "",
+    ].join(","));
+  return "# " + site.name + " lat " + site.lat + " lon " + site.lon + "\n" + rows.join("\n") + "\n";
+}

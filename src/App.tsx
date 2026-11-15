@@ -127,28 +127,34 @@ function Panel(props: { title: string; tag?: string; children: React.ReactNode; 
 /* Terrain map                                                         */
 /* ------------------------------------------------------------------ */
 
-function TerrainCanvas({ site }: { site: P.Site }) {
+function TerrainCanvas({ site, sunAz, lit }: { site: P.Site; sunAz: number; lit: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const cv = ref.current;
-    if (!cv) return;
-    const ctx = cv.getContext("2d");
-    if (!ctx) return;
-    const N = 420;
+  const N = 420;
+  const field = useMemo(() => {
     const z = new Float32Array(N * N);
     let lo = Infinity;
     let hi = -Infinity;
     for (let py = 0; py < N; py++)
       for (let px = 0; px < N; px++) {
-        const x = -1050 + ((px + 0.5) / N) * 2100;
-        const y = 1050 - ((py + 0.5) / N) * 2100;
-        const v = P.patchElevationAt(site, x, y);
+        const v = P.patchElevationAt(site, -1050 + ((px + 0.5) / N) * 2100, 1050 - ((py + 0.5) / N) * 2100);
         z[py * N + px] = v;
         if (v < lo) lo = v;
         if (v > hi) hi = v;
       }
+    return { z, lo, hi };
+  }, [site]);
+  const az = Math.round(sunAz / 3) * 3;
+  useEffect(() => {
+    const ctx = ref.current && ref.current.getContext("2d");
+    if (!ctx) return;
+    const { z, lo, hi } = field;
     const img = ctx.createImageData(N, N);
     const pxM = 2100 / N;
+    // Relief is lit from the Sun's true azimuth (elevation exaggerated to 28 deg so the terrain stays readable).
+    const lx = Math.sin(az * P.DEG) * 0.88;
+    const ly = Math.cos(az * P.DEG) * 0.88;
+    const lz = 0.47;
+    const warm = lit ? 1 : 0.55;
     for (let py = 0; py < N; py++)
       for (let px = 0; px < N; px++) {
         const i = py * N + px;
@@ -158,17 +164,16 @@ function TerrainCanvas({ site }: { site: P.Site }) {
         const zd = z[Math.min(N - 1, py + 1) * N + px];
         const gx = (zr - zl) / (2 * pxM);
         const gy = (zu - zd) / (2 * pxM);
-        const nl = Math.hypot(gx, gy, 1);
-        const shade = P.clamp((gx * 0.55 - gy * 0.55 + 0.63) / nl, 0, 1);
+        const shade = P.clamp((-gx * lx - gy * ly + lz) / Math.hypot(gx, gy, 1) / lz, 0, 1.9);
         const t = site.terrain ? (z[i] - lo) / (hi - lo || 1) : 0.25;
-        const b = 0.3 + 0.7 * shade;
-        let r = (18 + 150 * t) * b;
-        let g = (27 + 150 * t) * b;
-        let bl = (46 + 150 * t) * b;
+        const b = (0.16 + 0.62 * shade) * warm;
+        let r = (60 + 150 * t) * b * 1.06;
+        let g = (62 + 140 * t) * b;
+        let bl = (74 + 126 * t) * b * (lit ? 0.9 : 1.15);
         const c10 = Math.floor(z[i] / 10);
         if (c10 !== Math.floor(zr / 10) || c10 !== Math.floor(zd / 10)) {
           const major = Math.floor(z[i] / 50) !== Math.floor(zr / 50) || Math.floor(z[i] / 50) !== Math.floor(zd / 50);
-          const k = major ? 0.6 : 0.28;
+          const k = major ? 0.5 : 0.2;
           r = r * (1 - k) + 148 * k;
           g = g * (1 - k) + 163 * k;
           bl = bl * (1 - k) + 184 * k;
@@ -179,8 +184,8 @@ function TerrainCanvas({ site }: { site: P.Site }) {
         img.data[i * 4 + 3] = 255;
       }
     ctx.putImageData(img, 0, 0);
-  }, [site]);
-  return <canvas ref={ref} width={420} height={420} aria-hidden="true" />;
+  }, [field, az, lit, site.terrain]);
+  return <canvas ref={ref} width={N} height={N} aria-hidden="true" />;
 }
 
 function NudgeMap(props: {
@@ -191,6 +196,8 @@ function NudgeMap(props: {
   overlay: Overlay;
   haven: { ix: number; iy: number; dist: number } | null;
   pulse?: boolean;
+  sunAz: number;
+  sunLit: boolean;
   onMove: (c: Cell) => void;
 }) {
   const { cell, grid, month, overlay, haven } = props;
@@ -264,12 +271,16 @@ function NudgeMap(props: {
       role="application"
       aria-label="Terrain map. Click a cell or use arrow keys to move the lander in 100 metre steps."
     >
-      <TerrainCanvas site={props.site} />
+      <TerrainCanvas site={props.site} sunAz={props.sunAz} lit={props.sunLit} />
       <svg viewBox="0 0 21 21" preserveAspectRatio="none">
         {cells}
         {arrow}
         <line x1={cx} y1={0} x2={cx} y2={21} stroke="#fff" strokeOpacity={0.35} strokeWidth={0.04} />
         <line x1={0} y1={cy} x2={21} y2={cy} stroke="#fff" strokeOpacity={0.35} strokeWidth={0.04} />
+        <circle cx={cx} cy={cy} r={0.52} fill="none" stroke="#fff" strokeOpacity={0.5} strokeWidth={0.07}>
+          {!reducedMotion() && <animate attributeName="r" values="0.52;1.5" dur="1.8s" repeatCount="indefinite" />}
+          {!reducedMotion() && <animate attributeName="stroke-opacity" values="0.7;0" dur="1.8s" repeatCount="indefinite" />}
+        </circle>
         <circle cx={cx} cy={cy} r={0.52} fill="none" stroke="#fff" strokeWidth={0.13} />
         <circle cx={cx} cy={cy} r={0.12} fill="#fff" />
         <g fontSize={0.62} fontFamily="JetBrains Mono, monospace" fill="#E2E8F0">
@@ -367,7 +378,11 @@ function Panorama({ profile, timeline, now }: { profile: Float32Array; timeline:
         <path d={g.sunAll} fill="none" stroke={C.gold} strokeWidth={1.2} />
         <path d={g.earth} fill="none" stroke={C.cyan} strokeOpacity={0.7} strokeWidth={1} />
         <circle cx={g.X(now.earthAz)} cy={g.Y(now.earthEl)} r={earthR} fill={C.blue} stroke={C.cyan} strokeWidth={1.5} />
-        {sunLit && <circle cx={g.X(now.sunAz)} cy={g.Y(now.sunEl)} r={sunR + 5} fill={C.amber} fillOpacity={0.3} />}
+        {sunLit && (
+          <circle cx={g.X(now.sunAz)} cy={g.Y(now.sunEl)} r={sunR + 5} fill={C.amber} fillOpacity={0.3}>
+            {!reducedMotion() && <animate attributeName="r" values={`${sunR + 4};${sunR + 11};${sunR + 4}`} dur="2.6s" repeatCount="indefinite" />}
+          </circle>
+        )}
         {sunLit && <circle cx={g.X(now.sunAz)} cy={g.Y(now.sunEl)} r={sunR} fill={C.gold} />}
         <path d={g.terrain} fill="url(#ter)" stroke="#8494ad" strokeWidth={1.2} strokeLinejoin="round" />
         <path d={g.sunHidden} fill="none" stroke={C.faint} strokeWidth={1} strokeDasharray="2 4" />
@@ -497,7 +512,9 @@ function EarthReticle({ profile, timeline, now }: { profile: Float32Array; timel
         <path d={g.hid} fill="none" stroke={C.crimson} strokeWidth={1.3} strokeDasharray="3 3" />
         <circle cx={ex} cy={ey} r={er} fill="none" stroke={col} strokeWidth={1.5} strokeDasharray={glitch ? "4 3" : undefined} />
         <circle cx={ex} cy={ey} r={er + 9} fill="none" stroke={col} strokeOpacity={0.6} />
-        <circle cx={ex} cy={ey} r={er + 20} fill="none" stroke={col} strokeOpacity={0.3} strokeDasharray="2 5" />
+        <circle cx={ex} cy={ey} r={er + 20} fill="none" stroke={col} strokeOpacity={0.45} strokeDasharray="2 5">
+          {!reducedMotion() && <animateTransform attributeName="transform" type="rotate" from={`0 ${ex} ${ey}`} to={`360 ${ex} ${ey}`} dur="14s" repeatCount="indefinite" />}
+        </circle>
         {[0, 90, 180, 270].map((a) => {
           const c = Math.cos(a * P.DEG);
           const s = Math.sin(a * P.DEG);
@@ -821,6 +838,207 @@ function Provenance({ onClose }: { onClose: () => void }) {
 /* App                                                                 */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* Starfield, polar view, window finder                                */
+/* ------------------------------------------------------------------ */
+
+function Starfield() {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const cv = ref.current;
+    const ctx = cv && cv.getContext("2d");
+    if (!cv || !ctx) return;
+    let w = 0;
+    let h = 0;
+    const stars = Array.from({ length: 220 }, () => ({ x: Math.random(), y: Math.random(), r: Math.random() * 1.2 + 0.2, p: Math.random() * 6.28, s: 0.4 + Math.random() * 1.4 }));
+    let shoot: { x: number; y: number; t: number } | null = null;
+    const size = () => {
+      w = cv.width = window.innerWidth;
+      h = cv.height = window.innerHeight;
+    };
+    size();
+    window.addEventListener("resize", size);
+    let raf = 0;
+    let last = 0;
+    const still = reducedMotion();
+    const draw = (ms: number) => {
+      raf = requestAnimationFrame(draw);
+      if (ms - last < 50 && !still) return;
+      last = ms;
+      ctx.clearRect(0, 0, w, h);
+      for (const st of stars) {
+        const a = still ? 0.6 : 0.35 + 0.45 * Math.sin(st.p + (ms / 1000) * st.s);
+        ctx.fillStyle = `rgba(226,232,240,${a.toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(st.x * w, st.y * h, st.r, 0, 6.28);
+        ctx.fill();
+      }
+      if (still) {
+        cancelAnimationFrame(raf);
+        return;
+      }
+      if (!shoot && Math.random() < 0.004) shoot = { x: Math.random() * w * 0.8, y: Math.random() * h * 0.4, t: 0 };
+      if (shoot) {
+        shoot.t += 0.06;
+        const x = shoot.x + shoot.t * 420;
+        const y = shoot.y + shoot.t * 170;
+        const gr = ctx.createLinearGradient(x - 90, y - 36, x, y);
+        gr.addColorStop(0, "rgba(255,255,255,0)");
+        gr.addColorStop(1, `rgba(255,255,255,${(0.8 * (1 - shoot.t)).toFixed(2)})`);
+        ctx.strokeStyle = gr;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(x - 90, y - 36);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+        if (shoot.t >= 1) shoot = null;
+      }
+    };
+    raf = requestAnimationFrame(draw);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", size);
+    };
+  }, []);
+  return <canvas ref={ref} className="stars" aria-hidden="true" />;
+}
+
+/** Looking down on the south pole: where the sunlight is, where Earth is, where the sites are. */
+function PolarView({ eph, siteId }: { eph: P.Ephemeris; siteId: string }) {
+  const S = 300;
+  const R = 118;
+  const c = S / 2;
+  const pos = (lat: number, lon: number) => {
+    const r = ((90 + lat) / 10) * R;
+    return [c + r * Math.sin(lon * P.DEG), c - r * Math.cos(lon * P.DEG)];
+  };
+  const off = (-eph.subSolarLat / 10) * R;
+  const dir = (lon: number, r: number) => [c + r * Math.sin(lon * P.DEG), c - r * Math.cos(lon * P.DEG)];
+  const sun = dir(eph.subSolarLon, R + 22);
+  const earth = dir(eph.subEarthLon, R + 22);
+  return (
+    <svg className="chart" viewBox={`0 0 ${S} ${S}`} role="img" aria-label="Map of the south polar cap showing the sunlit half, the direction of Earth and the landing sites">
+      <defs>
+        <clipPath id="cap">
+          <circle cx={c} cy={c} r={R} />
+        </clipPath>
+        <radialGradient id="capg">
+          <stop offset="0" stopColor="#1e293b" />
+          <stop offset="1" stopColor="#0b1120" />
+        </radialGradient>
+      </defs>
+      <circle cx={c} cy={c} r={R} fill="url(#capg)" />
+      <g clipPath="url(#cap)">
+        <rect x={c - 2 * R} y={c - 2 * R} width={4 * R} height={2 * R + off} fill={C.amber} fillOpacity={0.3} transform={`rotate(${eph.subSolarLon} ${c} ${c})`} />
+      </g>
+      <circle cx={c} cy={c} r={R} fill="none" stroke="#475569" />
+      <circle cx={c} cy={c} r={R / 2} fill="none" stroke="#334155" strokeDasharray="2 4" />
+      <text x={c + 4} y={c - R / 2 - 3} fontSize={9}>85°S</text>
+      <text x={c + 4} y={c - R - 3} fontSize={9}>80°S</text>
+      <line x1={c} y1={c} x2={sun[0]} y2={sun[1]} stroke={C.gold} strokeOpacity={0.5} strokeDasharray="3 4" />
+      <circle cx={sun[0]} cy={sun[1]} r={7} fill={C.gold}>
+        {!reducedMotion() && <animate attributeName="r" values="6;8.5;6" dur="2.6s" repeatCount="indefinite" />}
+      </circle>
+      <text x={sun[0]} y={sun[1] + (sun[1] > c ? 19 : -12)} textAnchor="middle" style={{ fill: C.gold }}>SUN</text>
+      <line x1={c} y1={c} x2={earth[0]} y2={earth[1]} stroke={C.cyan} strokeOpacity={0.5} strokeDasharray="3 4" />
+      <circle cx={earth[0]} cy={earth[1]} r={6} fill={C.blue} stroke={C.cyan} />
+      <text x={earth[0] + 10} y={earth[1] + 4} style={{ fill: C.cyan }}>EARTH</text>
+      {P.SITES.filter((s) => s.terrain).map((s) => {
+        const [x, y] = pos(s.lat, s.lon);
+        const on = s.id === siteId;
+        return (
+          <g key={s.id}>
+            {on && !reducedMotion() && (
+              <circle cx={x} cy={y} r={5} fill="none" stroke="#fff">
+                <animate attributeName="r" values="4;13" dur="1.8s" repeatCount="indefinite" />
+                <animate attributeName="stroke-opacity" values="0.8;0" dur="1.8s" repeatCount="indefinite" />
+              </circle>
+            )}
+            <circle cx={x} cy={y} r={on ? 4.5 : 3} fill={on ? "#fff" : "#94A3B8"} />
+            <text
+              x={s.id === "malapert" ? x - 8 : x + 8}
+              y={s.id === "mouton" ? y - 5 : y + 4}
+              textAnchor={s.id === "malapert" ? "end" : "start"}
+              fontSize={10}
+              style={{ fill: on ? "#fff" : C.dim, fontSize: 10 }}
+            >
+              {s.short}
+            </text>
+          </g>
+        );
+      })}
+      <circle cx={c} cy={c} r={1.6} fill="#fff" />
+    </svg>
+  );
+}
+
+function WindowFinder({ scan, startMs, onPick }: { scan: P.YearScan; startMs: number; onPick: (ms: number) => void }) {
+  const best = useMemo(() => P.bestWindows(scan), [scan]);
+  const rects = useMemo(() => {
+    const out: React.ReactNode[] = [];
+    for (let d = 0; d < scan.days; d++) {
+      out.push(<rect key={"s" + d} x={d} y={0} width={1.05} height={16} fill={C.amber} fillOpacity={0.08 + 0.92 * (scan.sunPct[d] / 100) ** 1.6} />);
+      out.push(<rect key={"e" + d} x={d} y={18} width={1.05} height={16} fill={C.cyan} fillOpacity={0.08 + 0.92 * (scan.earthPct[d] / 100) ** 1.6} />);
+      if (scan.nightH[d] >= 48) out.push(<rect key={"n" + d} x={d} y={36} width={1.05} height={6} fill={C.crimson} />);
+    }
+    return out;
+  }, [scan]);
+  const months: [number, string][] = [];
+  for (let d = 0; d < scan.days; d++) {
+    const dt = new Date(startMs + d * DAY);
+    if (dt.getUTCDate() === 1) months.push([d, dt.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" })]);
+  }
+  return (
+    <>
+      <div className="spark-rows">
+        <div className="wf-labels">
+          <span className="amber">SUN</span>
+          <span className="cyan">EARTH</span>
+          <span className="crimson">48 h+</span>
+        </div>
+        <svg
+          className="wf"
+          viewBox={`0 0 ${scan.days} 42`}
+          preserveAspectRatio="none"
+          role="img"
+          aria-label="Twelve month scan of landing dates"
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            onPick(startMs + Math.floor(P.clamp((e.clientX - r.left) / r.width, 0, 0.999) * scan.days) * DAY);
+          }}
+        >
+          {rects}
+          {best.map((d) => (
+            <rect key={d} x={d} y={0} width={scan.missionDays} height={34} fill="none" stroke="#fff" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+          ))}
+        </svg>
+      </div>
+      <div className="axis" style={{ position: "relative", height: 14, marginLeft: 52 }}>
+        {months.map(([d, m]) => (
+          <span key={d} style={{ position: "absolute", left: (d / scan.days) * 100 + "%" }}>{m}</span>
+        ))}
+      </div>
+      <div className="wf-best">
+        {best.map((d, i) => (
+          <button key={d} className="btn small" onClick={() => onPick(startMs + d * DAY)}>
+            <b>#{i + 1}</b> {fmtDay(startMs + d * DAY)} · Sun {scan.sunPct[d].toFixed(0)}% · Earth {scan.earthPct[d].toFixed(0)}% · night {scan.nightH[d].toFixed(0)} h
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+interface Pin {
+  id: number;
+  label: string;
+  siteId: string;
+  cell: Cell;
+  baseMs: number;
+  delay: number;
+  stats: P.TimelineStats;
+}
+
 const BEATS = ["The Eternal Peak Myth", "The 100 m Cliff Edge", "Rocket Delay Cascade", "Crisis Triage Challenge"];
 
 export default function App() {
@@ -847,6 +1065,8 @@ export default function App() {
   const [crisis, setCrisis] = useState<Crisis | null>(null);
   const [showProv, setShowProv] = useState(false);
   const [briefing, setBriefing] = useState(true);
+  const [pins, setPins] = useState<Pin[]>([]);
+  const [copied, setCopied] = useState(false);
   const [feed, setFeed] = useState<"checking" | "live" | "local">("checking");
   const [ephV, setEphV] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -1066,6 +1286,65 @@ export default function App() {
   const lockLabel = now.lock === "LOCK" ? "NOMINAL LOCK" : now.lock === "GRAZING" ? "GRAZING LOCK" : "RIDGE OCCULTATION BLACKOUT";
   const lockTone = now.lock === "LOCK" ? "cyan" : now.lock === "GRAZING" ? "blue" : "crimson";
   const st = timeline.stats;
+  const scanStart = Math.floor(baseMs / DAY) * DAY;
+  const scan = useMemo(() => P.scanYear(site, profile, scanStart), [site, profile, scanStart, ephV]);
+  const ephNow = useMemo(() => P.ephemeris(tNow), [tNow, ephV]);
+  const canDownload = typeof location !== "undefined" && (location.protocol === "file:" || /github\.io$/.test(location.hostname));
+  const pickDate = (ms: number) => {
+    if (crisis) return;
+    clearTimers();
+    setBeat(null);
+    setBaseMs(ms);
+    setDelayRaw(0);
+  };
+  const findBest = () => {
+    if (crisis || !site.terrain) return;
+    const w = P.surveyWindow(site, baseMs, 720);
+    let bi = 0;
+    let bs = -1;
+    for (let i = 0; i < month.length; i++) {
+      const sc = month[i] + w.earthPct[i] - Math.max(0, w.maxEclipseH[i] - 24) * 0.3;
+      if (sc > bs) {
+        bs = sc;
+        bi = i;
+      }
+    }
+    moveTo({ ix: bi % P.GRID_N, iy: Math.floor(bi / P.GRID_N) });
+  };
+  const pinNow = () =>
+    setPins((p) => [
+      ...p.slice(-4),
+      { id: Date.now(), label: `${site.short} · ${sgn(dE, 0)} E ${sgn(dN, 0)} N · ${fmtDay(baseMs + delayRaw * DAY)}`, siteId, cell, baseMs, delay: delayRaw, stats: st },
+    ]);
+  const restore = (p: Pin) => {
+    if (crisis) return;
+    clearTimers();
+    setBeat(null);
+    if (p.siteId === "custom" && siteId !== "custom") return;
+    setSiteId(p.siteId);
+    setNudges((n) => ({ ...n, [p.siteId]: p.cell }));
+    setBaseMs(p.baseMs);
+    setDelayRaw(p.delay);
+  };
+  const copyCsv = () => {
+    try {
+      navigator.clipboard.writeText(P.timelineCsv(site, timeline)).then(
+        () => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1600);
+        },
+        () => {}
+      );
+    } catch {}
+  };
+  const downloadCsv = () => {
+    try {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([P.timelineCsv(site, timeline)], { type: "text/csv" }));
+      a.download = `${site.id}_${new Date(baseMs).toISOString().slice(0, 10)}_timeline.csv`;
+      a.click();
+    } catch {}
+  };
   const dE = (cell.ix - 10) * 100;
   const dN = (cell.iy - 10) * 100;
   const monthHere = month[cell.iy * P.GRID_N + cell.ix];
@@ -1110,6 +1389,7 @@ export default function App() {
 
   return (
     <div className="app">
+      <Starfield />
       <header className="top">
         <div className="brand">
           <div className="brand-mark" aria-hidden="true" />
@@ -1219,6 +1499,8 @@ export default function App() {
               overlay={overlay}
               haven={haven}
               pulse={!!crisis}
+              sunAz={now.sunAz}
+              sunLit={now.sunFrac > 0.02}
               onMove={moveTo}
             />
             <div className="map-tools">
@@ -1243,6 +1525,9 @@ export default function App() {
                 <dt>30-d Sun</dt>
                 <dd>{monthHere.toFixed(0)}%</dd>
               </dl>
+              <button className="btn small glow" onClick={findBest} disabled={!!crisis || !site.terrain}>
+                ◎ Find best cell
+              </button>
               <label className="field">
                 Overlay
                 <select id="overlay" value={overlay} onChange={(e) => setOverlay(e.target.value as Overlay)}>
@@ -1416,9 +1701,19 @@ export default function App() {
           <Panel
             title="Timeline · launch delay"
             right={
-              <button className="btn small" onClick={play} disabled={running}>
-                {playing ? "■ Stop" : "▶ Play 30 days"}
-              </button>
+              <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button className="btn small" onClick={copyCsv}>
+                  {copied ? "Copied ✓" : "Copy CSV"}
+                </button>
+                {canDownload && (
+                  <button className="btn small" onClick={downloadCsv}>
+                    Download CSV
+                  </button>
+                )}
+                <button className="btn small" onClick={play} disabled={running}>
+                  {playing ? "■ Stop" : "▶ Play 30 days"}
+                </button>
+              </span>
             }
           >
             <div className="controls">
@@ -1499,6 +1794,72 @@ export default function App() {
               </p>
             )}
           </Panel>
+
+          <Panel title="Landing window finder · next 12 months" tag="14-day surface mission">
+            <WindowFinder scan={scan} startMs={scanStart} onPick={pickDate} />
+            <p className="dim" style={{ margin: 0, fontSize: 12 }}>
+              Each column is a landing date at the current lander position. Brighter means more of the following 14 days
+              in sunlight (top) or with Earth in view (middle); red marks an eclipse of 48 hours or longer. White boxes
+              are the three best windows. Click any date to load it.
+            </p>
+          </Panel>
+
+          <Panel
+            title="Scenario comparison"
+            right={
+              <button className="btn small glow" onClick={pinNow}>
+                + Pin current scenario
+              </button>
+            }
+          >
+            <div style={{ overflowX: "auto" }}>
+              <table className="cmp">
+                <thead>
+                  <tr>
+                    <th>Scenario (30 days from landing)</th>
+                    <th>Sun</th>
+                    <th>Longest night</th>
+                    <th>Earth link</th>
+                    <th>Longest blackout</th>
+                    <th>Battery low</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="cur">
+                    <td>Current · {site.short} · {sgn(dE, 0)} E {sgn(dN, 0)} N · {fmtDay(baseMs)}</td>
+                    <td>{st.sunPct.toFixed(0)}%</td>
+                    <td>{st.longestNightH} h</td>
+                    <td>{st.commsPct.toFixed(0)}%</td>
+                    <td>{fmtDur(st.longestBlackoutH)}</td>
+                    <td>{(st.minSoc * 100).toFixed(0)}%</td>
+                    <td />
+                  </tr>
+                  {pins.map((p) => (
+                    <tr key={p.id}>
+                      <td>
+                        <button className="lnk" onClick={() => restore(p)}>{p.label}</button>
+                      </td>
+                      <td className={p.stats.sunPct > st.sunPct ? "ok" : ""}>{p.stats.sunPct.toFixed(0)}%</td>
+                      <td className={p.stats.longestNightH < st.longestNightH ? "ok" : ""}>{p.stats.longestNightH} h</td>
+                      <td className={p.stats.commsPct > st.commsPct ? "ok" : ""}>{p.stats.commsPct.toFixed(0)}%</td>
+                      <td className={p.stats.longestBlackoutH < st.longestBlackoutH ? "ok" : ""}>{fmtDur(p.stats.longestBlackoutH)}</td>
+                      <td className={p.stats.minSoc > st.minSoc ? "ok" : ""}>{(p.stats.minSoc * 100).toFixed(0)}%</td>
+                      <td>
+                        <button className="lnk" aria-label="Remove pinned scenario" onClick={() => setPins((x) => x.filter((q) => q.id !== p.id))}>✕</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {pins.length === 0 && (
+              <p className="dim" style={{ margin: 0, fontSize: 12 }}>
+                Pin a scenario, then change the site, position or date. Pinned rows stay for side-by-side comparison;
+                cyan marks where a pinned scenario beats the current one. Click a pinned row to reload it.
+              </p>
+            )}
+          </Panel>
         </div>
 
         {/* ---------------- right ---------------- */}
@@ -1517,6 +1878,22 @@ export default function App() {
                 <span><i style={{ background: C.cyan }} />30-day path, visible</span>
                 <span><i style={{ background: C.crimson }} />Occulted by ridge</span>
                 <span>Disc {(now.earthRadius * 2).toFixed(2)}°</span>
+              </div>
+            )}
+          </Panel>
+
+          <Panel title="South pole from above" tag="80°S to pole">
+            <PolarView eph={ephNow} siteId={siteId} />
+            {explorer ? (
+              <p className="callout">
+                Looking straight down on the pole. The amber half is in daylight; it sweeps around once every 29.5 days.
+                Earth always sits toward the top, wobbling slightly. A site needs the Sun's side and Earth's side clear
+                of mountains at the same time.
+              </p>
+            ) : (
+              <div className="legend">
+                <span><i style={{ background: C.amber }} />Sunlit hemisphere (terminator)</span>
+                <span>0° longitude up, 90°E right</span>
               </div>
             )}
           </Panel>

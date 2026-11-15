@@ -13,6 +13,9 @@ is the Sun above the local horizon (power), and is Earth above it (direct-to-Ear
   at each of three south-pole sites: Shackleton Connecting Ridge, Malapert Massif, Mons Mouton.
 - Simulates 30 days of sunlight, Earth link and battery charge, with time to next sunset / Earthset.
 - Lets you nudge the lander in 100 m steps, slip the launch date by up to 30 days, and compare sites side by side.
+- Landing window finder: scans the next 12 months for the best 14-day landing dates at the chosen position.
+- Scenario comparison: pin site/position/date combinations and compare them side by side.
+- One-click best-cell search, CSV export of the 30-day timeline, and a top-down polar view of sunlight and Earth direction.
 - Flight Engineer mode (raw telemetry) and Explorer mode (plain-English explanations).
 - Tries a live JPL Horizons feed for the chosen date and falls back to the built-in engine if the call is blocked.
 - Three survival gauges (battery, comms link, solar efficiency), a guided tour and a 15-second "crisis triage" game
