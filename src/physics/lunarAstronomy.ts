@@ -408,6 +408,7 @@ export interface PowerConfig {
   loadW: number;
   batteryWh: number;
   tracking: Tracking;
+  relay?: boolean; // a relay orbiter covers Earth blackouts (assumes continuous coverage)
 }
 
 export const DEFAULT_POWER: PowerConfig = {
@@ -418,7 +419,20 @@ export const DEFAULT_POWER: PowerConfig = {
   tracking: "vertical",
 };
 
-export type LockState = "LOCK" | "GRAZING" | "BLACKOUT";
+const SIGMA = 5.670374e-8;
+/** Illustrative single-node thermal model of a small insulated lander. */
+export const THERMAL = {
+  heatCapacityJK: 2.0e5, // about 400 kg at 500 J/kg/K
+  radiatorM2: 1.0, // effective emissivity x area
+  solarAbsorbedW: 250, // absorbed sunlight when fully lit
+  sinkLitK: 220, // effective surroundings when sunlit (warm ground in view)
+  sinkDarkK: 100, // effective surroundings in shadow
+  heaterW: 100,
+  heaterOnK: 253.15, // heaters on below -20 C
+  survivalC: -40, // electronics and battery survival limit
+};
+
+export type LockState = "LOCK" | "GRAZING" | "BLACKOUT" | "RELAY";
 
 export interface State {
   t: number;
@@ -462,7 +476,7 @@ export function evaluate(sky: Sky, profile: Float32Array, power: PowerConfig, t:
   const powerW = power.arrayPeakW * power.arrayHealth * sunFrac * cosEff;
   const earthHorizon = horizonAt(profile, sky.earthAz);
   const earthClearance = sky.earthEl - earthHorizon;
-  const lock: LockState = earthClearance <= 0 ? "BLACKOUT" : earthClearance < sky.earthRadius ? "GRAZING" : "LOCK";
+  const lock: LockState = earthClearance <= 0 ? (power.relay ? "RELAY" : "BLACKOUT") : earthClearance < sky.earthRadius ? "GRAZING" : "LOCK";
   const lb = linkBudget(sky.earthRangeKm, earthClearance, sky.earthRadius);
   return {
     t,
@@ -490,6 +504,8 @@ export function stateAt(site: Site, profile: Float32Array, power: PowerConfig, t
 
 export interface TimelineSample extends State {
   soc: number; // battery state of charge 0..1
+  tempC: number; // lander bulk temperature
+  heaterW: number;
 }
 
 export interface TimelineStats {
@@ -498,6 +514,8 @@ export interface TimelineStats {
   longestNightH: number;
   longestBlackoutH: number;
   minSoc: number;
+  minTempC: number;
+  frozenH: number; // hours below the survival temperature
   meanPowerW: number;
 }
 
@@ -525,12 +543,32 @@ export function simulateTimeline(
   let black = 0;
   let longestBlack = 0;
   let minSoc = 1;
+  let tempK = 293;
+  let minTempC = 20;
+  let frozenH = 0;
   let pSum = 0;
   const n = Math.round(hours / stepH);
   for (let i = 0; i <= n; i++) {
     const t = startMs + i * stepH * 3600000;
     const st = stateAt(site, profile, power, t);
-    if (i > 0) soc = clamp(soc + ((st.powerW - power.loadW) * stepH) / power.batteryWh, 0, 1);
+    // Thermal node: heaters switch on below the setpoint and draw from the same bus as the electronics.
+    const heaterW = tempK < THERMAL.heaterOnK ? THERMAL.heaterW : 0;
+    const demand = power.loadW + heaterW;
+    let dissipated = demand;
+    if (i > 0) {
+      const next = soc + ((st.powerW - demand) * stepH) / power.batteryWh;
+      if (next <= 0 && st.powerW < demand) dissipated = st.powerW; // battery flat: only what the array supplies
+      soc = clamp(next, 0, 1);
+      const sink = THERMAL.sinkDarkK + (THERMAL.sinkLitK - THERMAL.sinkDarkK) * st.sunFrac;
+      const sub = Math.max(1, Math.round(stepH * 4));
+      for (let k = 0; k < sub; k++) {
+        const q = THERMAL.solarAbsorbedW * st.sunFrac + dissipated - SIGMA * THERMAL.radiatorM2 * (tempK ** 4 - sink ** 4);
+        tempK += (q * ((stepH * 3600) / sub)) / THERMAL.heatCapacityJK;
+      }
+    }
+    const tempC = tempK - 273.15;
+    if (tempC < minTempC) minTempC = tempC;
+    if (tempC < THERMAL.survivalC) frozenH += stepH;
     if (st.sunFrac > 0.02) {
       lit++;
       night = 0;
@@ -547,7 +585,7 @@ export function simulateTimeline(
     }
     if (soc < minSoc) minSoc = soc;
     pSum += st.powerW;
-    samples.push({ ...st, soc });
+    samples.push({ ...st, soc, tempC, heaterW });
   }
   return {
     samples,
@@ -558,6 +596,8 @@ export function simulateTimeline(
       longestNightH: longestNight,
       longestBlackoutH: longestBlack,
       minSoc,
+      minTempC,
+      frozenH,
       meanPowerW: pSum / (n + 1),
     },
   };
@@ -738,11 +778,11 @@ export function bestWindows(scan: YearScan, count = 3, minGapDays = 20): number[
 
 /** CSV export of a simulated timeline. */
 export function timelineCsv(site: Site, tl: Timeline): string {
-  const rows = ["utc,sun_az_deg,sun_el_deg,sun_horizon_deg,sun_disc_visible,array_power_w,battery_soc,earth_az_deg,earth_el_deg,earth_horizon_deg,earth_clearance_deg,link_state,link_margin_db"];
+  const rows = ["utc,sun_az_deg,sun_el_deg,sun_horizon_deg,sun_disc_visible,array_power_w,battery_soc,earth_az_deg,earth_el_deg,earth_horizon_deg,earth_clearance_deg,link_state,link_margin_db,lander_temp_c,heater_w"];
   for (const s of tl.samples)
     rows.push([
       new Date(s.t).toISOString(), s.sunAz.toFixed(3), s.sunEl.toFixed(3), s.sunHorizon.toFixed(2), s.sunFrac.toFixed(3), s.powerW.toFixed(1), s.soc.toFixed(3),
-      s.earthAz.toFixed(3), s.earthEl.toFixed(3), s.earthHorizon.toFixed(2), s.earthClearance.toFixed(3), s.lock, isFinite(s.linkMarginDb) ? s.linkMarginDb.toFixed(1) : "",
+      s.earthAz.toFixed(3), s.earthEl.toFixed(3), s.earthHorizon.toFixed(2), s.earthClearance.toFixed(3), s.lock, isFinite(s.linkMarginDb) ? s.linkMarginDb.toFixed(1) : "", s.tempC.toFixed(1), s.heaterW.toFixed(0),
     ].join(","));
   return "# " + site.name + " lat " + site.lat + " lon " + site.lon + "\n" + rows.join("\n") + "\n";
 }

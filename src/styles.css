@@ -464,3 +464,8 @@ input[type="range"]::-webkit-slider-thumb { width: 18px; height: 18px; margin-to
 .langsel select { padding: 6px 8px; font-family: var(--display); font-weight: 600; letter-spacing: 0.1em; font-size: 11px; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .surface.green { color: var(--mint); } .surface.amber { color: var(--amber); } .surface.crimson { color: var(--crimson); }
+
+.verdict { font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; padding: 2px 9px; border-radius: 999px; border: 1px solid currentColor; }
+.verdict.ok { color: var(--mint); } .verdict.bad { color: #9cc4ff; }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--dim); }
+.check input { margin-top: 2px; accent-color: #8b7cff; }

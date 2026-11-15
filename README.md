@@ -27,6 +27,9 @@ is the Sun above the local horizon (power), and is Earth above it (direct-to-Ear
 - Bring your own terrain: select NASA's `LDEM_80S_20M.IMG` (and optionally `LDEM_75S_240M.IMG`) and the app builds
   the horizon masks for any site south of 80.3 deg S in the browser.
 - Explorer text in English, Spanish and French (machine translated).
+- Thermal check: a simple lander temperature model with heaters shows whether the vehicle stays above its survival
+  limit through each eclipse.
+- Relay option: see how a relay orbiter would change each site's communications.
 - Flight Engineer mode (raw telemetry) and Explorer mode (plain-English explanations).
 - Tries a live JPL Horizons feed for the chosen date and falls back to the built-in engine if the call is blocked.
 - Three survival gauges (battery, comms link, solar efficiency), a guided tour and a 15-second "crisis triage" game
@@ -78,6 +81,7 @@ node build.mjs
   illustrative, not any specific lander's tolerance.
 - Horizon masks are sampled at 1 deg of azimuth with 20 m terrain near the lander; boulder-scale relief is absent.
 - Physical libration, nutation and ground-station position on Earth are not modelled.
+- The thermal model is a single lumped node with illustrative values; the relay option assumes continuous coverage.
 - Lander power and radio figures (480 W array, 140 W load, 3.6 kWh battery, S-band link) are illustrative assumptions.
 - Chandrayaan-3, Apollo 11 and custom coordinates use a smooth-sphere horizon (no terrain loaded).
 

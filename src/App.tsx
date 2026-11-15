@@ -36,6 +36,7 @@ const fmtDay = (ms: number) =>
 
 function fmtDur(h: number | null): string {
   if (h === null) return "30 d+";
+  if (h === 0) return "none";
   if (h < 1) return Math.max(1, Math.round(h * 60)) + " min";
   if (h < 48) return Math.floor(h) + " h " + String(Math.round((h % 1) * 60)).padStart(2, "0") + " m";
   return Math.floor(h / 24) + " d " + String(Math.floor(h % 24)).padStart(2, "0") + " h";
@@ -229,7 +230,7 @@ function NudgeMap(props: {
             op = 0.1 + 0.28 * f;
           } else op = 0.6;
         } else if (overlay === "earth") {
-          fill = grid[i].lock === "LOCK" ? C.cyan : grid[i].lock === "GRAZING" ? C.blue : C.crimson;
+          fill = grid[i].lock === "LOCK" ? C.cyan : grid[i].lock === "GRAZING" ? C.blue : grid[i].lock === "RELAY" ? "#8B7CFF" : C.crimson;
           op = 0.3;
         } else if (overlay === "slope") {
           const sl = props.slope.max[i];
@@ -642,7 +643,7 @@ function Sparkline({ timeline, delay, onPick }: { timeline: P.Timeline; delay: n
       }
     };
     run((x) => (x.sunFrac > 0.98 ? C.amber + "|1" : x.sunFrac > 0.02 ? C.amber + "|0.45" : C.slate + "|0.7"), 0, 20, "s");
-    run((x) => (x.lock === "LOCK" ? C.cyan + "|1" : x.lock === "GRAZING" ? C.blue + "|1" : C.crimson + "|0.9"), 22, 20, "e");
+    run((x) => (x.lock === "LOCK" ? C.cyan + "|1" : x.lock === "GRAZING" ? C.blue + "|1" : x.lock === "RELAY" ? "#8B7CFF|1" : C.crimson + "|0.9"), 22, 20, "e");
     let area = "M0,86";
     let line = "";
     for (let i = 0; i <= n; i++) {
@@ -654,6 +655,7 @@ function Sparkline({ timeline, delay, onPick }: { timeline: P.Timeline; delay: n
     out.push(<path key="a" d={area} fill={C.text} fillOpacity={0.1} />);
     out.push(<path key="l" d={line} fill="none" stroke={C.text} strokeWidth={1.2} vectorEffect="non-scaling-stroke" />);
     run((x) => (x.soc <= 0.001 ? C.crimson + "|1" : "none|0"), 83, 3, "b");
+    run((x) => (x.tempC < P.THERMAL.survivalC ? "#9CC4FF|1" : "none|0"), 44, 4, "f");
     return out;
   }, [timeline]);
   const pick = (e: React.MouseEvent<SVGSVGElement>) => {
@@ -926,6 +928,8 @@ function Provenance({ onClose }: { onClose: () => void }) {
           <ul>
             <li>Array 480 W at normal incidence. Vertical Sun-tracking output scales with cos(El); a flat deck array scales with sin(El).</li>
             <li>Load 140 W continuous, battery 3.6 kWh, starts full on the planned landing date.</li>
+            <li>Thermal: one lumped node (200 kJ/K, 1 m² effective radiator, 250 W absorbed when sunlit), 100 W heaters below −20 °C, survival limit −40 °C. Heaters draw from the battery; when it is flat the lander cools freely.</li>
+            <li>Relay option: treats a relay orbiter as always in view, which a real constellation would only approximate.</li>
             <li>Downlink: S-band 2.25 GHz, 10 W, 12 dBi antenna, 34 m class ground station (G/T 40 dB/K), 2 Mbps, 7.5 dB required Eb/N0 including losses, up to 6 dB multipath fade at grazing angles.</li>
             <li>Earth lock states: nominal when the full 1.9° disc clears the ridge, grazing when the centre is above it, blackout when the centre is below.</li>
           </ul>
@@ -1198,6 +1202,7 @@ export default function App() {
   const L = STR[lang];
   const [cfg, setCfg] = useState({ arrayW: P.DEFAULT_POWER.arrayPeakW, loadW: P.DEFAULT_POWER.loadW, batteryWh: P.DEFAULT_POWER.batteryWh, slopeSafe: P.SLOPE_SAFE_DEG });
   const slopeSafe = cfg.slopeSafe;
+  const [relay, setRelay] = useState(false);
   const [linkMsg, setLinkMsg] = useState("");
   const [upMsg, setUpMsg] = useState("");
   const [upBusy, setUpBusy] = useState(false);
@@ -1256,8 +1261,9 @@ export default function App() {
       tracking: crisis ? "vertical" : tracking,
       arrayHealth: crisis ? crisis.sc.health : 1,
       loadW: crisis ? crisis.sc.load : cfg.loadW,
+      relay: relay && !crisis,
     }),
-    [tracking, crisis?.sc, cfg.arrayW, cfg.batteryWh, cfg.loadW]
+    [tracking, crisis?.sc, cfg.arrayW, cfg.batteryWh, cfg.loadW, relay]
   );
 
   const tNow = baseMs + delay * DAY;
@@ -1422,9 +1428,12 @@ export default function App() {
   /* ---- derived labels ---- */
   const sunState = now.sunFrac > 0.98 ? "SUNLIT" : now.sunFrac > 0.02 ? "PARTIAL ECLIPSE" : "ECLIPSED";
   const sunTone = now.sunFrac > 0.98 ? "amber" : now.sunFrac > 0.02 ? "orange" : "slate";
-  const lockLabel = now.lock === "LOCK" ? "NOMINAL LOCK" : now.lock === "GRAZING" ? "GRAZING LOCK" : "RIDGE OCCULTATION BLACKOUT";
-  const lockTone = now.lock === "LOCK" ? "cyan" : now.lock === "GRAZING" ? "blue" : "crimson";
+  const lockLabel = now.lock === "LOCK" ? "NOMINAL LOCK" : now.lock === "GRAZING" ? "GRAZING LOCK" : now.lock === "RELAY" ? "RELAY LINK" : "RIDGE OCCULTATION BLACKOUT";
+  const lockTone = now.lock === "LOCK" ? "cyan" : now.lock === "GRAZING" || now.lock === "RELAY" ? "blue" : "crimson";
   const st = timeline.stats;
+  const tempNow = timeline.samples[idx].tempC;
+  const heaterNow = timeline.samples[idx].heaterW;
+  const freezes = st.frozenH > 0;
   const slope = useMemo(() => P.surveySlope(site), [site]);
   const slopeHere = slope.max[cell.iy * P.GRID_N + cell.ix];
   const slopeMean = slope.mean[cell.iy * P.GRID_N + cell.ix];
@@ -1571,6 +1580,7 @@ export default function App() {
       `Sunlit ${st.sunPct.toFixed(0)}%, longest night ${st.longestNightH} h`,
       `Earth link ${st.commsPct.toFixed(0)}%, longest blackout ${fmtDur(st.longestBlackoutH)}`,
       `Battery low point ${(st.minSoc * 100).toFixed(0)}%`,
+      `Coldest lander temperature ${st.minTempC.toFixed(0)} °C; ${freezes ? `below ${P.THERMAL.survivalC} °C for ${st.frozenH} h (does not survive)` : "stays above the survival limit"}`,
       "",
       "LANDING SURFACE",
       site.terrain ? `${surface}: max slope ${slopeHere.toFixed(1)}°, mean ${slopeMean.toFixed(1)}°, roughness ${roughHere.toFixed(1)} m (20 m baseline)` : "No terrain loaded",
@@ -2097,6 +2107,10 @@ export default function App() {
               <span className="sub">
                 {discharging ? "Discharging" : soc >= 1 ? "Full" : "Charging"} · 30-day low <b>{(st.minSoc * 100).toFixed(0)}%</b>
               </span>
+              <span className="sub">
+                Lander <b className={tempNow < P.THERMAL.survivalC ? "crimson" : ""}>{sgn(tempNow, 0)} °C</b>
+                {heaterNow > 0 ? <> · heaters <b>{heaterNow} W</b></> : null}
+              </span>
             </div>
             <div className={"tile s-" + lockTone}>
               <span className="k">Direct-to-Earth link</span>
@@ -2206,6 +2220,8 @@ export default function App() {
               <span><i style={{ background: C.cyan }} />Earth lock</span>
               <span><i style={{ background: C.blue }} />Grazing</span>
               <span><i style={{ background: C.crimson }} />Comms blackout / battery flat</span>
+              <span><i style={{ background: "#9CC4FF" }} />Below {P.THERMAL.survivalC} °C</span>
+              {power.relay && <span><i style={{ background: "#8B7CFF" }} />Relay link</span>}
             </div>
             <div className="stats">
               <span>Sunlit <b>{st.sunPct.toFixed(0)}%</b></span>
@@ -2213,6 +2229,10 @@ export default function App() {
               <span>Earth link <b>{st.commsPct.toFixed(0)}%</b></span>
               <span>Longest blackout <b>{fmtDur(st.longestBlackoutH)}</b></span>
               <span>Mean power <b>{st.meanPowerW.toFixed(0)} W</b></span>
+              <span>Coldest <b className={freezes ? "crimson" : ""}>{st.minTempC.toFixed(0)} °C</b></span>
+              <span className={"verdict " + (freezes ? "bad" : "ok")}>
+                {freezes ? `FREEZES · below ${P.THERMAL.survivalC} °C for ${st.frozenH} h` : "SURVIVES · stays above " + P.THERMAL.survivalC + " °C"}
+              </span>
             </div>
             {explorer && (
               <p className="callout">
@@ -2256,6 +2276,7 @@ export default function App() {
                     <th>Earth link</th>
                     <th>Longest blackout</th>
                     <th>Battery low</th>
+                    <th>Coldest</th>
                     <th>Slope</th>
                     <th />
                   </tr>
@@ -2268,6 +2289,7 @@ export default function App() {
                     <td>{st.commsPct.toFixed(0)}%</td>
                     <td>{fmtDur(st.longestBlackoutH)}</td>
                     <td>{(st.minSoc * 100).toFixed(0)}%</td>
+                    <td className={freezes ? "crimson" : ""}>{st.minTempC.toFixed(0)} °C</td>
                     <td>{site.terrain ? slopeHere.toFixed(1) + "°" : "n/a"}</td>
                     <td />
                   </tr>
@@ -2281,6 +2303,7 @@ export default function App() {
                       <td className={p.stats.commsPct > st.commsPct ? "ok" : ""}>{p.stats.commsPct.toFixed(0)}%</td>
                       <td className={p.stats.longestBlackoutH < st.longestBlackoutH ? "ok" : ""}>{fmtDur(p.stats.longestBlackoutH)}</td>
                       <td className={p.stats.minSoc > st.minSoc ? "ok" : ""}>{(p.stats.minSoc * 100).toFixed(0)}%</td>
+                      <td className={p.stats.minTempC > st.minTempC ? "ok" : ""}>{p.stats.minTempC.toFixed(0)} °C</td>
                       <td className={p.slope < slopeHere ? "ok" : ""}>{p.slope.toFixed(1)}°</td>
                       <td>
                         <button className="lnk" aria-label="Remove pinned scenario" onClick={() => setPins((x) => x.filter((q) => q.id !== p.id))}>✕</button>
@@ -2415,8 +2438,12 @@ export default function App() {
                 </label>
               ))}
             </div>
+            <label className="check">
+              <input id="relay" type="checkbox" checked={relay} disabled={!!crisis} onChange={(e) => setRelay(e.target.checked)} />
+              <span>Relay orbiter available. Fills Earth blackouts with a relay link, assuming continuous coverage.</span>
+            </label>
             <div className="legend">
-              <span>Power, battery and slope results across the planner update to match.</span>
+              <span>Power, battery, thermal and slope results across the planner update to match.</span>
               <button className="lnk" onClick={() => setCfg({ arrayW: P.DEFAULT_POWER.arrayPeakW, loadW: P.DEFAULT_POWER.loadW, batteryWh: P.DEFAULT_POWER.batteryWh, slopeSafe: P.SLOPE_SAFE_DEG })}>
                 Reset to defaults
               </button>
