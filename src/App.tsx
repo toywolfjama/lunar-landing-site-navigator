@@ -1,0 +1,1481 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as P from "./physics/lunarAstronomy";
+
+/* ------------------------------------------------------------------ */
+/* Helpers                                                             */
+/* ------------------------------------------------------------------ */
+
+const DAY = 86400000;
+const C = {
+  amber: "#F59E0B",
+  gold: "#FDE047",
+  cyan: "#06B6D4",
+  blue: "#3B82F6",
+  crimson: "#EF4444",
+  slate: "#334155",
+  line: "#1E293B",
+  dim: "#94A3B8",
+  faint: "#64748B",
+  text: "#E2E8F0",
+};
+
+const sgn = (x: number, d = 2) => (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(d);
+const fmtDate = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
+const fmtDay = (ms: number) =>
+  new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+
+function fmtDur(h: number | null): string {
+  if (h === null) return "30 d+";
+  if (h < 1) return Math.max(1, Math.round(h * 60)) + " min";
+  if (h < 48) return Math.floor(h) + " h " + String(Math.round((h % 1) * 60)).padStart(2, "0") + " m";
+  return Math.floor(h / 24) + " d " + String(Math.floor(h % 24)).padStart(2, "0") + " h";
+}
+
+function useDebounced<T>(value: T, ms: number): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(id);
+  }, [value, ms]);
+  return v;
+}
+
+const reducedMotion = () =>
+  typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+type Mode = "engineer" | "explorer";
+type Overlay = "sun" | "earth" | "month";
+type Cell = { ix: number; iy: number };
+
+/* ------------------------------------------------------------------ */
+/* Error boundary                                                      */
+/* ------------------------------------------------------------------ */
+
+export class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err: boolean; tries: number }> {
+  state = { err: false, tries: 0 };
+  timer: any = null;
+  static getDerivedStateFromError() {
+    return { err: true };
+  }
+  componentDidCatch() {
+    if (this.state.tries < 1) this.timer = setTimeout(() => this.setState((s) => ({ err: false, tries: s.tries + 1 })), 3000);
+  }
+  componentWillUnmount() {
+    clearTimeout(this.timer);
+  }
+  render() {
+    if (!this.state.err) return this.props.children;
+    return (
+      <div className="lost-screen" role="alert">
+        <div>
+          <h1>TELEMETRY LOST - RECONNECTING...</h1>
+          <p className="dim">A calculation failed. The console will retry once on its own.</p>
+          <button className="btn" onClick={() => this.setState({ err: false })}>
+            Reconnect now
+          </button>
+        </div>
+      </div>
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Small UI atoms                                                      */
+/* ------------------------------------------------------------------ */
+
+function NumberRoll({ value }: { value: number }) {
+  const [shown, setShown] = useState(value);
+  const prev = useRef(value);
+  useEffect(() => {
+    if (prev.current === value) return;
+    prev.current = value;
+    if (reducedMotion()) {
+      setShown(value);
+      return;
+    }
+    let n = 0;
+    const id = setInterval(() => {
+      n++;
+      if (n >= 7) {
+        clearInterval(id);
+        setShown(value);
+      } else setShown(Math.floor(Math.random() * 100));
+    }, 32);
+    return () => {
+      clearInterval(id);
+      setShown(value);
+    };
+  }, [value]);
+  return <>{String(shown).padStart(2, "0")}</>;
+}
+
+function Panel(props: { title: string; tag?: string; children: React.ReactNode; right?: React.ReactNode }) {
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h2>{props.title}</h2>
+        {props.right}
+        {props.tag && <span className="tag">{props.tag}</span>}
+      </div>
+      {props.children}
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Terrain map                                                         */
+/* ------------------------------------------------------------------ */
+
+function TerrainCanvas({ site }: { site: P.Site }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const ctx = cv.getContext("2d");
+    if (!ctx) return;
+    const N = 420;
+    const z = new Float32Array(N * N);
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let py = 0; py < N; py++)
+      for (let px = 0; px < N; px++) {
+        const x = -1050 + ((px + 0.5) / N) * 2100;
+        const y = 1050 - ((py + 0.5) / N) * 2100;
+        const v = P.patchElevationAt(site, x, y);
+        z[py * N + px] = v;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    const img = ctx.createImageData(N, N);
+    const pxM = 2100 / N;
+    for (let py = 0; py < N; py++)
+      for (let px = 0; px < N; px++) {
+        const i = py * N + px;
+        const zr = z[py * N + Math.min(N - 1, px + 1)];
+        const zl = z[py * N + Math.max(0, px - 1)];
+        const zu = z[Math.max(0, py - 1) * N + px];
+        const zd = z[Math.min(N - 1, py + 1) * N + px];
+        const gx = (zr - zl) / (2 * pxM);
+        const gy = (zu - zd) / (2 * pxM);
+        const nl = Math.hypot(gx, gy, 1);
+        const shade = P.clamp((gx * 0.55 - gy * 0.55 + 0.63) / nl, 0, 1);
+        const t = site.terrain ? (z[i] - lo) / (hi - lo || 1) : 0.25;
+        const b = 0.3 + 0.7 * shade;
+        let r = (18 + 150 * t) * b;
+        let g = (27 + 150 * t) * b;
+        let bl = (46 + 150 * t) * b;
+        const c10 = Math.floor(z[i] / 10);
+        if (c10 !== Math.floor(zr / 10) || c10 !== Math.floor(zd / 10)) {
+          const major = Math.floor(z[i] / 50) !== Math.floor(zr / 50) || Math.floor(z[i] / 50) !== Math.floor(zd / 50);
+          const k = major ? 0.6 : 0.28;
+          r = r * (1 - k) + 148 * k;
+          g = g * (1 - k) + 163 * k;
+          bl = bl * (1 - k) + 184 * k;
+        }
+        img.data[i * 4] = r;
+        img.data[i * 4 + 1] = g;
+        img.data[i * 4 + 2] = bl;
+        img.data[i * 4 + 3] = 255;
+      }
+    ctx.putImageData(img, 0, 0);
+  }, [site]);
+  return <canvas ref={ref} width={420} height={420} aria-hidden="true" />;
+}
+
+function NudgeMap(props: {
+  site: P.Site;
+  cell: Cell;
+  grid: P.CellStatus[];
+  month: Float32Array;
+  overlay: Overlay;
+  haven: { ix: number; iy: number; dist: number } | null;
+  onMove: (c: Cell) => void;
+}) {
+  const { cell, grid, month, overlay, haven } = props;
+  const cells = useMemo(() => {
+    const out: React.ReactNode[] = [];
+    for (let iy = 0; iy < P.GRID_N; iy++)
+      for (let ix = 0; ix < P.GRID_N; ix++) {
+        const i = iy * P.GRID_N + ix;
+        let fill = "#04060e";
+        let op = 0;
+        if (overlay === "sun") {
+          const f = grid[i].sunFrac;
+          if (f > 0.02) {
+            fill = C.amber;
+            op = 0.1 + 0.28 * f;
+          } else op = 0.6;
+        } else if (overlay === "earth") {
+          fill = grid[i].lock === "LOCK" ? C.cyan : grid[i].lock === "GRAZING" ? C.blue : C.crimson;
+          op = 0.3;
+        } else {
+          const p = month[i] / 100;
+          fill = `rgb(${Math.round(4 + 241 * p)},${Math.round(6 + 152 * p)},${Math.round(14 - 3 * p)})`;
+          op = 0.18 + 0.42 * Math.abs(p - 0.5) * 2 * (p < 0.5 ? 1 : 0.75);
+        }
+        out.push(<rect key={i} x={ix} y={20 - iy} width={1.02} height={1.02} fill={fill} fillOpacity={op} />);
+      }
+    return out;
+  }, [grid, month, overlay]);
+
+  const cx = cell.ix + 0.5;
+  const cy = 20 - cell.iy + 0.5;
+  const click = (e: React.MouseEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const ix = P.clamp(Math.floor(((e.clientX - r.left) / r.width) * 21), 0, 20);
+    const iy = P.clamp(20 - Math.floor(((e.clientY - r.top) / r.height) * 21), 0, 20);
+    props.onMove({ ix, iy });
+  };
+  const key = (e: React.KeyboardEvent) => {
+    const d: Record<string, [number, number]> = { ArrowUp: [0, 1], ArrowDown: [0, -1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
+    const m = d[e.key];
+    if (!m) return;
+    e.preventDefault();
+    props.onMove({ ix: P.clamp(cell.ix + m[0], 0, 20), iy: P.clamp(cell.iy + m[1], 0, 20) });
+  };
+  let arrow: React.ReactNode = null;
+  if (haven && (haven.ix !== cell.ix || haven.iy !== cell.iy)) {
+    const hx = haven.ix + 0.5;
+    const hy = 20 - haven.iy + 0.5;
+    const len = Math.hypot(hx - cx, hy - cy);
+    const ux = (hx - cx) / len;
+    const uy = (hy - cy) / len;
+    const tx = hx - ux * 0.5;
+    const ty = hy - uy * 0.5;
+    arrow = (
+      <g>
+        <line x1={cx + ux * 0.55} y1={cy + uy * 0.55} x2={tx} y2={ty} stroke={C.gold} strokeWidth={0.16} />
+        <polygon
+          points={`${hx - ux * 0.1},${hy - uy * 0.1} ${tx - uy * 0.38},${ty + ux * 0.38} ${tx + uy * 0.38},${ty - ux * 0.38}`}
+          fill={C.gold}
+        />
+        <rect x={haven.ix} y={20 - haven.iy} width={1} height={1} fill="none" stroke={C.gold} strokeWidth={0.1} />
+      </g>
+    );
+  }
+  return (
+    <div
+      className="map-wrap"
+      onClick={click}
+      onKeyDown={key}
+      tabIndex={0}
+      role="application"
+      aria-label="Terrain map. Click a cell or use arrow keys to move the lander in 100 metre steps."
+    >
+      <TerrainCanvas site={props.site} />
+      <svg viewBox="0 0 21 21" preserveAspectRatio="none">
+        {cells}
+        {arrow}
+        <line x1={cx} y1={0} x2={cx} y2={21} stroke="#fff" strokeOpacity={0.35} strokeWidth={0.04} />
+        <line x1={0} y1={cy} x2={21} y2={cy} stroke="#fff" strokeOpacity={0.35} strokeWidth={0.04} />
+        <circle cx={cx} cy={cy} r={0.52} fill="none" stroke="#fff" strokeWidth={0.13} />
+        <circle cx={cx} cy={cy} r={0.12} fill="#fff" />
+        <g fontSize={0.62} fontFamily="JetBrains Mono, monospace" fill="#E2E8F0">
+          <text x={10.5} y={0.8} textAnchor="middle">N</text>
+          <line x1={0.6} y1={20.3} x2={5.6} y2={20.3} stroke="#E2E8F0" strokeWidth={0.07} />
+          <text x={0.6} y={19.9}>500 m</text>
+          {!props.site.terrain && (
+            <text x={10.5} y={8} textAnchor="middle" fontSize={0.72}>
+              No terrain loaded · smooth-sphere horizon
+            </text>
+          )}
+        </g>
+      </svg>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 360 degree panorama                                                 */
+/* ------------------------------------------------------------------ */
+
+function Panorama({ profile, timeline, now }: { profile: Float32Array; timeline: P.Timeline; now: P.State }) {
+  const W = 900;
+  const H = 270;
+  const L = 34;
+  const R = 8;
+  const T = 10;
+  const B = 24;
+  const g = useMemo(() => {
+    let pmax = -90;
+    for (let i = 0; i < profile.length; i++) if (profile[i] > pmax) pmax = profile[i];
+    const yMin = -6;
+    const yMax = P.clamp(Math.ceil(Math.max(pmax + 2, 8)), 8, 40);
+    const sx = (W - L - R) / 360;
+    const sy = (H - T - B) / (yMax - yMin);
+    const X = (az: number) => L + az * sx;
+    const Y = (el: number) => T + (yMax - P.clamp(el, yMin - 1, yMax + 1)) * sy;
+    let terrain = `M${X(0)},${H - B}`;
+    for (let i = 0; i <= P.N_AZ; i++) terrain += `L${X((i * 360) / P.N_AZ).toFixed(1)},${Y(profile[i % P.N_AZ]).toFixed(1)}`;
+    terrain += `L${X(360)},${H - B}Z`;
+    let sunAll = "";
+    let sunHidden = "";
+    let earth = "";
+    const n = Math.min(timeline.samples.length, Math.ceil((P.T_SYN_DAYS * 24) / timeline.stepH) + 2);
+    let prev: P.TimelineSample | null = null;
+    let prevHidden = false;
+    for (let i = 0; i < n; i++) {
+      const s = timeline.samples[i];
+      const brk = !prev || Math.abs(s.sunAz - prev.sunAz) > 180;
+      const pt = `${X(s.sunAz).toFixed(1)},${Y(s.sunEl).toFixed(1)}`;
+      sunAll += (brk ? "M" : "L") + pt;
+      const hidden = s.sunFrac < 0.5;
+      if (hidden) sunHidden += (brk || !prevHidden ? "M" : "L") + pt;
+      prevHidden = hidden;
+      prev = s;
+    }
+    prev = null;
+    for (let i = 0; i < timeline.samples.length; i += 3) {
+      const s = timeline.samples[i];
+      const brk = !prev || Math.abs(s.earthAz - prev.earthAz) > 180;
+      earth += (brk ? "M" : "L") + `${X(s.earthAz).toFixed(1)},${Y(s.earthEl).toFixed(1)}`;
+      prev = s;
+    }
+    const ticks: number[] = [];
+    for (let e = -5; e <= yMax; e += 5) ticks.push(e);
+    return { yMin, yMax, sx, sy, X, Y, terrain, sunAll, sunHidden, earth, ticks };
+  }, [profile, timeline]);
+
+  const sunR = Math.max(4.5, now.sunFrac >= 0 ? 0.27 * g.sy : 0);
+  const earthR = Math.max(5, now.earthRadius * g.sy);
+  const sunLit = now.sunFrac > 0.02;
+  const compass = [
+    [0, "N"], [45, "NE"], [90, "E"], [135, "SE"], [180, "S"], [225, "SW"], [270, "W"], [315, "NW"], [360, "N"],
+  ] as [number, string][];
+  return (
+    <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="360 degree horizon panorama with the path of the Sun and the position of Earth">
+      <defs>
+        <linearGradient id="ter" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0" stopColor="#273449" />
+          <stop offset="1" stopColor="#0b1120" />
+        </linearGradient>
+        <clipPath id="plot">
+          <rect x={L} y={T} width={W - L - R} height={H - T - B} />
+        </clipPath>
+      </defs>
+      <rect x={L} y={T} width={W - L - R} height={H - T - B} fill="#050810" />
+      {g.ticks.map((e) => (
+        <g key={e}>
+          <line x1={L} x2={W - R} y1={g.Y(e)} y2={g.Y(e)} stroke={e === 0 ? "#3b4a63" : "#141d2f"} strokeWidth={1} />
+          <text x={L - 5} y={g.Y(e) + 3} textAnchor="end">{e}°</text>
+        </g>
+      ))}
+      <g clipPath="url(#plot)">
+        <path d={g.sunAll} fill="none" stroke={C.amber} strokeOpacity={0.28} strokeWidth={Math.max(5, 0.54 * g.sy)} strokeLinecap="round" />
+        <path d={g.sunAll} fill="none" stroke={C.gold} strokeWidth={1.2} />
+        <path d={g.earth} fill="none" stroke={C.cyan} strokeOpacity={0.7} strokeWidth={1} />
+        <circle cx={g.X(now.earthAz)} cy={g.Y(now.earthEl)} r={earthR} fill={C.blue} stroke={C.cyan} strokeWidth={1.5} />
+        {sunLit && <circle cx={g.X(now.sunAz)} cy={g.Y(now.sunEl)} r={sunR + 5} fill={C.amber} fillOpacity={0.3} />}
+        {sunLit && <circle cx={g.X(now.sunAz)} cy={g.Y(now.sunEl)} r={sunR} fill={C.gold} />}
+        <path d={g.terrain} fill="url(#ter)" stroke="#8494ad" strokeWidth={1.2} strokeLinejoin="round" />
+        <path d={g.sunHidden} fill="none" stroke={C.faint} strokeWidth={1} strokeDasharray="2 4" />
+        {!sunLit && (
+          <circle cx={g.X(now.sunAz)} cy={g.Y(now.sunEl)} r={sunR + 2} fill="none" stroke={C.amber} strokeWidth={1.4} strokeDasharray="3 3" />
+        )}
+        {now.lock === "BLACKOUT" && (
+          <circle cx={g.X(now.earthAz)} cy={g.Y(now.earthEl)} r={earthR} fill="none" stroke={C.crimson} strokeWidth={1.6} strokeDasharray="3 3" />
+        )}
+      </g>
+      <text
+        x={P.clamp(g.X(now.sunAz), L + 40, W - R - 40)}
+        y={Math.max(T + 10, g.Y(Math.max(now.sunEl, now.sunHorizon)) - sunR - 9)}
+        textAnchor="middle"
+        style={{ fill: sunLit ? C.gold : C.amber }}
+      >
+        SUN {sgn(now.sunEl, 1)}°
+      </text>
+      <text
+        x={P.clamp(g.X(now.earthAz), L + 40, W - R - 40)}
+        y={Math.max(T + 10, g.Y(Math.max(now.earthEl, now.earthHorizon)) - earthR - 7)}
+        textAnchor="middle"
+        style={{ fill: now.lock === "BLACKOUT" ? C.crimson : C.cyan }}
+      >
+        EARTH {sgn(now.earthEl, 1)}°
+      </text>
+      {compass.map(([az, lb]) => (
+        <text key={az} x={g.X(az)} y={H - 8} textAnchor={az === 0 ? "start" : az === 360 ? "end" : "middle"}>
+          {lb}
+        </text>
+      ))}
+    </svg>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Earth libration reticle                                             */
+/* ------------------------------------------------------------------ */
+
+let noiseUrl: string | null = null;
+function getNoise(): string {
+  if (noiseUrl !== null) return noiseUrl;
+  try {
+    const c = document.createElement("canvas");
+    c.width = c.height = 160;
+    const x = c.getContext("2d")!;
+    const im = x.createImageData(160, 160);
+    for (let i = 0; i < im.data.length; i += 4) {
+      const v = Math.random() * 255;
+      im.data[i] = im.data[i + 1] = im.data[i + 2] = v;
+      im.data[i + 3] = Math.random() < 0.55 ? 255 : 0;
+    }
+    x.putImageData(im, 0, 0);
+    noiseUrl = `url(${c.toDataURL()})`;
+  } catch {
+    noiseUrl = "";
+  }
+  return noiseUrl;
+}
+
+function EarthReticle({ profile, timeline, now }: { profile: Float32Array; timeline: P.Timeline; now: P.State }) {
+  const S = 340;
+  const g = useMemo(() => {
+    let sx = 0;
+    let sy = 0;
+    let elLo = Infinity;
+    let elHi = -Infinity;
+    for (const s of timeline.samples) {
+      sx += Math.sin(s.earthAz * P.DEG);
+      sy += Math.cos(s.earthAz * P.DEG);
+      if (s.earthEl < elLo) elLo = s.earthEl;
+      if (s.earthEl > elHi) elHi = s.earthEl;
+    }
+    const azC = P.norm360(Math.atan2(sx, sy) / P.DEG);
+    let azSpan = 0;
+    for (const s of timeline.samples) azSpan = Math.max(azSpan, Math.abs(P.norm180(s.earthAz - azC)));
+    const span = Math.max(18, azSpan * 2 + 5, elHi - elLo + 6);
+    const elC = (elLo + elHi) / 2;
+    const k = S / span;
+    const X = (az: number) => S / 2 + P.norm180(az - azC) * k;
+    const Y = (el: number) => S / 2 - (el - elC) * k;
+    let terrain = `M0,${S}`;
+    for (let d = -span / 2; d <= span / 2 + 0.01; d += 0.25) terrain += `L${(S / 2 + d * k).toFixed(1)},${Y(P.horizonAt(profile, azC + d)).toFixed(1)}`;
+    terrain += `L${S},${S}Z`;
+    let vis = "";
+    let hid = "";
+    let pv = false;
+    let ph = false;
+    for (let i = 0; i < timeline.samples.length; i += 2) {
+      const s = timeline.samples[i];
+      const pt = `${X(s.earthAz).toFixed(1)},${Y(s.earthEl).toFixed(1)}`;
+      const hidden = s.lock === "BLACKOUT";
+      vis += (pv ? "L" : "M") + pt;
+      pv = true;
+      if (hidden) {
+        hid += (ph ? "L" : "M") + pt;
+        ph = true;
+      } else ph = false;
+    }
+    const grid: number[] = [];
+    const step = span > 30 ? 5 : 2;
+    for (let d = Math.ceil(-span / 2 / step) * step; d <= span / 2; d += step) grid.push(d);
+    return { azC, elC, k, X, Y, terrain, vis, hid, grid, step, span };
+  }, [profile, timeline]);
+
+  const ex = g.X(now.earthAz);
+  const ey = g.Y(now.earthEl);
+  const er = now.earthRadius * g.k;
+  const col = now.lock === "LOCK" ? C.cyan : now.lock === "GRAZING" ? C.blue : C.crimson;
+  const glitch = now.lock === "BLACKOUT";
+  return (
+    <div className={"reticle" + (glitch ? " glitch" : "")}>
+      <svg viewBox={`0 0 ${S} ${S}`} role="img" aria-label="Earth position against the local ridge line, with its monthly libration path">
+        {g.grid.map((d) => (
+          <g key={d}>
+            <line x1={S / 2 + d * g.k} x2={S / 2 + d * g.k} y1={0} y2={S} stroke="#111a2c" />
+            <line y1={S / 2 - d * g.k} y2={S / 2 - d * g.k} x1={0} x2={S} stroke="#111a2c" />
+            <text x={4} y={S / 2 - d * g.k - 3} fontSize={9} fontFamily="JetBrains Mono, monospace" fill={C.faint}>
+              {sgn(g.elC + d, 0)}°
+            </text>
+          </g>
+        ))}
+        <path d={g.vis} fill="none" stroke={C.cyan} strokeOpacity={0.75} strokeWidth={1.3} />
+        <circle cx={ex} cy={ey} r={er} fill="#1d4ed8" />
+        <circle cx={ex - er * 0.25} cy={ey - er * 0.25} r={er * 0.55} fill="#3B82F6" fillOpacity={0.7} />
+        <path d={g.terrain} fill="#131c2e" stroke="#8494ad" strokeWidth={1.3} strokeLinejoin="round" />
+        <path d={g.hid} fill="none" stroke={C.crimson} strokeWidth={1.3} strokeDasharray="3 3" />
+        <circle cx={ex} cy={ey} r={er} fill="none" stroke={col} strokeWidth={1.5} strokeDasharray={glitch ? "4 3" : undefined} />
+        <circle cx={ex} cy={ey} r={er + 9} fill="none" stroke={col} strokeOpacity={0.6} />
+        <circle cx={ex} cy={ey} r={er + 20} fill="none" stroke={col} strokeOpacity={0.3} strokeDasharray="2 5" />
+        {[0, 90, 180, 270].map((a) => {
+          const c = Math.cos(a * P.DEG);
+          const s = Math.sin(a * P.DEG);
+          return <line key={a} x1={ex + c * (er + 4)} y1={ey + s * (er + 4)} x2={ex + c * (er + 26)} y2={ey + s * (er + 26)} stroke={col} strokeWidth={1.2} />;
+        })}
+        <text x={S - 6} y={14} textAnchor="end" fontSize={10} fontFamily="JetBrains Mono, monospace" fill={C.faint}>
+          AZ {g.azC.toFixed(0)}° ± {(g.span / 2).toFixed(0)}° · grid {g.step}°
+        </text>
+        <text x={S - 6} y={S - 8} textAnchor="end" fontSize={11} fontFamily="JetBrains Mono, monospace" fill={col}>
+          {now.earthClearance >= 0
+            ? `${sgn(now.earthClearance, 1)}° ABOVE RIDGE`
+            : `${Math.abs(now.earthClearance).toFixed(1)}° BELOW RIDGE`}
+        </text>
+      </svg>
+      <div className="noise" style={glitch ? { backgroundImage: getNoise() } : undefined} />
+      <div className="scan" />
+      <div className="lost">
+        <span>NO CARRIER · EARTH OCCULTED</span>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 30-day survival sparkline                                           */
+/* ------------------------------------------------------------------ */
+
+function Sparkline({ timeline, delay, onPick }: { timeline: P.Timeline; delay: number; onPick: (d: number) => void }) {
+  const els = useMemo(() => {
+    const out: React.ReactNode[] = [];
+    const s = timeline.samples;
+    const n = s.length - 1;
+    const run = (cls: (x: P.TimelineSample) => string, y: number, h: number, kp: string) => {
+      let a = 0;
+      for (let i = 1; i <= n + 1; i++) {
+        if (i === n + 1 || cls(s[i]) !== cls(s[a])) {
+          const c = cls(s[a]).split("|");
+          out.push(<rect key={kp + a} x={a} y={y} width={i - a + 0.3} height={h} fill={c[0]} fillOpacity={+c[1]} />);
+          a = i;
+        }
+      }
+    };
+    run((x) => (x.sunFrac > 0.98 ? C.amber + "|1" : x.sunFrac > 0.02 ? C.amber + "|0.45" : C.slate + "|0.7"), 0, 20, "s");
+    run((x) => (x.lock === "LOCK" ? C.cyan + "|1" : x.lock === "GRAZING" ? C.blue + "|1" : C.crimson + "|0.9"), 22, 20, "e");
+    let area = "M0,86";
+    let line = "";
+    for (let i = 0; i <= n; i++) {
+      const y = 84 - s[i].soc * 36;
+      area += `L${i},${y.toFixed(1)}`;
+      line += (i ? "L" : "M") + `${i},${y.toFixed(1)}`;
+    }
+    area += `L${n},86Z`;
+    out.push(<path key="a" d={area} fill={C.text} fillOpacity={0.1} />);
+    out.push(<path key="l" d={line} fill="none" stroke={C.text} strokeWidth={1.2} vectorEffect="non-scaling-stroke" />);
+    run((x) => (x.soc <= 0.001 ? C.crimson + "|1" : "none|0"), 83, 3, "b");
+    return out;
+  }, [timeline]);
+  const pick = (e: React.MouseEvent<SVGSVGElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    onPick(Math.round(P.clamp((e.clientX - r.left) / r.width, 0, 1) * 300) / 10);
+  };
+  const x = delay * 24;
+  return (
+    <svg className="spark" viewBox="0 0 720 86" preserveAspectRatio="none" onClick={pick} role="img" aria-label="30 day forecast of sunlight, Earth link and battery charge">
+      <rect x={0} y={44} width={720} height={42} fill="#050810" />
+      {els}
+      <line x1={x} x2={x} y1={0} y2={86} stroke="#fff" strokeWidth={2} vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Crisis triage                                                       */
+/* ------------------------------------------------------------------ */
+
+interface Scenario {
+  title: string;
+  detail: string;
+  health: number;
+  load: number;
+  minClear: number;
+}
+const SCENARIOS: Scenario[] = [
+  {
+    title: "35% Array Loss + Comms Occlusion",
+    detail: "A debris strike took out a third of the array and the antenna has lost Earth behind the ridge.",
+    health: 0.65,
+    load: 140,
+    minClear: 0.95,
+  },
+  {
+    title: "50% Dust-Coated Array + Heater Surge",
+    detail: "Dust has halved array output and survival heaters are drawing 200 W. Only near-full Sun will do.",
+    health: 0.5,
+    load: 200,
+    minClear: 0.95,
+  },
+  {
+    title: "High-Gain Antenna Jam + 20% Array Loss",
+    detail: "Only the low-gain antenna works. It needs Earth at least 2° clear of the ridge.",
+    health: 0.8,
+    load: 140,
+    minClear: 2,
+  },
+];
+
+interface Crisis {
+  phase: "running" | "saved" | "lost";
+  sc: Scenario;
+  startedAt: number;
+  elapsed: number;
+}
+
+function generateCrisis(preferred: P.Site, baseMs: number) {
+  const order = [preferred, ...P.SITES.filter((s) => s !== preferred)].filter((s) => s.terrain);
+  for (const site of order)
+    for (let k = 0; k < 60; k++) {
+      const sc = SCENARIOS[Math.floor(Math.random() * SCENARIOS.length)];
+      const delay = Math.round(Math.random() * 300) / 10;
+      const power: P.PowerConfig = { ...P.DEFAULT_POWER, arrayHealth: sc.health, loadW: sc.load };
+      const grid = P.surveyGrid(site, power, baseMs + delay * DAY);
+      const req = { minPowerW: sc.load, minClearance: sc.minClear };
+      const count = grid.filter((c) => P.meets(c, req)).length;
+      if (count < 4 || count > 230) continue;
+      const starts: Cell[] = [];
+      for (let iy = 3; iy < 18; iy++)
+        for (let ix = 3; ix < 18; ix++) {
+          if (P.meets(grid[iy * P.GRID_N + ix], req)) continue;
+          const h = P.nearestHaven(grid, ix, iy, req);
+          if (h && h.dist >= 300 && h.dist <= 650) starts.push({ ix, iy });
+        }
+      if (!starts.length) continue;
+      return { site, sc, delay, start: starts[Math.floor(Math.random() * starts.length)] };
+    }
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Provenance drawer                                                   */
+/* ------------------------------------------------------------------ */
+
+function Provenance({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [onClose]);
+  return (
+    <div className="backdrop" onClick={onClose}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="prov-h" onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+          <h2 id="prov-h">Data &amp; Agency Provenance</h2>
+          <button className="btn small" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <p className="dim">
+          Everything on this page is computed in your browser with no network calls. The terrain was extracted from
+          NASA archives ahead of time and is embedded in the page.
+        </p>
+        <section>
+          <h3>1 · Ephemeris engine · validated against JPL Horizons</h3>
+          <p>
+            Sun and Earth directions come from an analytic lunar theory (Meeus, Astronomical Algorithms, a truncation of
+            ELP-2000/82): Moon longitude, latitude and distance, solar longitude, then optical libration and the
+            sub-solar point using the 1.54242° inclination of the lunar equator. Each instant yields the sub-Earth and
+            sub-solar points, which are rotated into the site's local east-north-up frame.
+          </p>
+          <p>
+            Checked against JPL Horizons (DE440/441; target 301, observer quantities 14, 15 and 20) on 16 dates from 10
+            Feb to 11 May 2027: sub-Earth point within <b>0.04°</b>, sub-solar point within <b>0.06°</b>, Earth-Moon
+            range within <b>190 km</b>. The Sun's disc is 0.53° wide, so rise and set times carry an uncertainty of
+            roughly an hour from this source.
+          </p>
+          <p className="sim">
+            Not modelled: physical libration, nutation, and the offset between Earth's centre and a specific ground
+            station (up to about 1°).
+          </p>
+          <div className="links">
+            <a className="btn link" href="https://ssd.jpl.nasa.gov/horizons/" target="_blank" rel="noopener noreferrer">
+              Verify in JPL Horizons
+            </a>
+          </div>
+        </section>
+        <section>
+          <h3>2 · Topography &amp; horizon masks · NASA LRO LOLA</h3>
+          <p>
+            The three south-pole sites use Lunar Orbiter Laser Altimeter gridded elevation from the NASA PDS
+            Geosciences Node: <span className="mono">LDEM_80S_20M</span> (20 m per pixel) around the lander and{" "}
+            <span className="mono">LDEM_75S_240M</span> (240 m per pixel) out to 300 km. For each of the 441 lander
+            positions and every 1° of azimuth, a ray is marched over the curved Moon from 2 m above the surface and the
+            highest terrain angle is kept. With no atmosphere there is no refraction, so that line is the horizon.
+          </p>
+          <p className="sim">
+            Limits: masks are sampled at 1° of azimuth and 20 m near the lander, so boulders and metre-scale relief are
+            absent, and the LOLA grids are interpolated between laser tracks. The Chandrayaan-3, Apollo 11 and custom
+            sites have no terrain loaded and use a smooth-sphere horizon.
+          </p>
+          <p>
+            For comparison, LOLA-based modelling by Gläser et al. (2018) found average surface illumination of 77.1% to
+            88.0% at the best polar sites, with the maximum on the Shackleton–de Gerlache ridge.{" "}
+            <a href="https://ntrs.nasa.gov/archive/nasa/casi.ntrs.nasa.gov/20170007365.pdf" target="_blank" rel="noopener noreferrer" style={{ color: C.cyan }}>
+              NASA NTRS record
+            </a>
+          </p>
+          <div className="links">
+            <a className="btn link" href="https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/polar/img/" target="_blank" rel="noopener noreferrer">
+              LOLA polar DEMs (PDS)
+            </a>
+            <a
+              className="btn link"
+              href="https://quickmap.lroc.im-ldi.com/?prjExtent=-3673694.2760943%2C-1737400%2C3673694.2760943%2C1737400&earthShadowEnabled=true&proj=10&stack=3314"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              LROC Quickmap 3D Base
+            </a>
+            <a className="btn link" href="https://trek.nasa.gov/moon/" target="_blank" rel="noopener noreferrer">
+              NASA Moon Trek Explorer
+            </a>
+          </div>
+        </section>
+        <section>
+          <h3>3 · International collaboration · CSA</h3>
+          <p>
+            South-polar surface missions are an international effort under the Artemis Accords. The three candidate
+            sites sit in the region targeted by Artemis and CLPS planning; the Canadian Space Agency page gives context
+            on partner contributions to lunar exploration.
+          </p>
+          <div className="links">
+            <a className="btn link" href="https://www.asc-csa.gc.ca/eng/astronomy/moon-exploration/" target="_blank" rel="noopener noreferrer">
+              CSA Moon Exploration Details
+            </a>
+          </div>
+        </section>
+        <section>
+          <h3>Lander assumptions (illustrative)</h3>
+          <ul>
+            <li>Array 480 W at normal incidence. Vertical Sun-tracking output scales with cos(El); a flat deck array scales with sin(El).</li>
+            <li>Load 140 W continuous, battery 3.6 kWh, starts full on the planned landing date.</li>
+            <li>Downlink: S-band 2.25 GHz, 10 W, 12 dBi antenna, 34 m class ground station (G/T 40 dB/K), 2 Mbps, 7.5 dB required Eb/N0 including losses, up to 6 dB multipath fade at grazing angles.</li>
+            <li>Earth lock states: nominal when the full 1.9° disc clears the ridge, grazing when the centre is above it, blackout when the centre is below.</li>
+          </ul>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* App                                                                 */
+/* ------------------------------------------------------------------ */
+
+const BEATS = ["The Eternal Peak Myth", "The 100 m Cliff Edge", "Rocket Delay Cascade", "Crisis Triage Challenge"];
+
+export default function App() {
+  const [siteId, setSiteId] = useState("shackleton");
+  const [custom, setCustom] = useState<P.Site>(() => P.customSite(-85.4, 31.7));
+  const [cLat, setCLat] = useState("-85.4");
+  const [cLon, setCLon] = useState("31.7");
+  const allSites = useMemo(() => [...P.SITES, custom], [custom]);
+  const [nudges, setNudges] = useState<Record<string, Cell>>({
+    shackleton: { ix: 10, iy: 3 },
+    malapert: { ix: 10, iy: 10 },
+    mouton: { ix: 10, iy: 10 },
+    chandrayaan3: { ix: 10, iy: 10 },
+    apollo11: { ix: 10, iy: 10 },
+    custom: { ix: 10, iy: 10 },
+  });
+  const [baseMs, setBaseMs] = useState(Date.parse("2027-05-06T00:00:00Z"));
+  const [delayRaw, setDelayRaw] = useState(0);
+  const delay = useDebounced(delayRaw, 20);
+  const [mode, setMode] = useState<Mode>("engineer");
+  const [tracking, setTracking] = useState<P.Tracking>("vertical");
+  const [overlay, setOverlay] = useState<Overlay>("month");
+  const [beat, setBeat] = useState<number | null>(1);
+  const [crisis, setCrisis] = useState<Crisis | null>(null);
+  const [showProv, setShowProv] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [, setTick] = useState(0);
+  const timers = useRef<any[]>([]);
+
+  const clearTimers = useCallback(() => {
+    timers.current.forEach((t) => {
+      clearTimeout(t);
+      clearInterval(t);
+    });
+    timers.current = [];
+    setPlaying(false);
+  }, []);
+  useEffect(() => clearTimers, [clearTimers]);
+
+  const site = useMemo(() => allSites.find((s) => s.id === siteId) || allSites[0], [siteId, allSites]);
+  const cell = nudges[siteId];
+  const running = crisis?.phase === "running";
+
+  const power = useMemo<P.PowerConfig>(
+    () => ({
+      ...P.DEFAULT_POWER,
+      tracking: crisis ? "vertical" : tracking,
+      arrayHealth: crisis ? crisis.sc.health : 1,
+      loadW: crisis ? crisis.sc.load : P.DEFAULT_POWER.loadW,
+    }),
+    [tracking, crisis?.sc]
+  );
+
+  const tNow = baseMs + delay * DAY;
+  const Z = useMemo(() => P.buildElevationMatrix(site), [site]);
+  const profile = useMemo(() => P.horizonProfile(site, cell.ix, cell.iy), [site, cell.ix, cell.iy]);
+  const timeline = useMemo(() => P.simulateTimeline(site, profile, power, baseMs), [site, profile, power, baseMs]);
+  const now = useMemo(() => P.stateAt(site, profile, power, tNow), [site, profile, power, tNow]);
+  const sunEvt = useMemo(() => P.nextEvent(site, profile, tNow, "sun"), [site, profile, tNow]);
+  const earthEvt = useMemo(() => P.nextEvent(site, profile, tNow, "earth"), [site, profile, tNow]);
+  const grid = useMemo(() => P.surveyGrid(site, power, tNow), [site, power, tNow]);
+  const month = useMemo(() => P.surveyIllumination(site, baseMs), [site, baseMs]);
+  const compare = useMemo(
+    () => allSites.map((s) => P.simulateTimeline(s, P.horizonProfile(s, nudges[s.id].ix, nudges[s.id].iy), power, baseMs, 720, 2).stats),
+    [allSites, nudges, power, baseMs]
+  );
+
+  const idx = P.clamp(Math.round((delay * 24) / timeline.stepH), 0, timeline.samples.length - 1);
+  const soc = timeline.samples[idx].soc;
+  const socPct = Math.round(soc * 100);
+  const discharging = now.powerW < power.loadW && soc < 1;
+
+  const req = useMemo<P.Requirement>(
+    () => ({ minPowerW: power.loadW, minClearance: crisis ? crisis.sc.minClear : now.earthRadius }),
+    [power.loadW, crisis?.sc, now.earthRadius]
+  );
+  const cellOk = P.meets(grid[cell.iy * P.GRID_N + cell.ix], req);
+  const haven = useMemo(() => {
+    if (cellOk || running) return null;
+    const both = P.nearestHaven(grid, cell.ix, cell.iy, req);
+    if (both) return { ...both, kind: "Sun + Earth" };
+    if (grid[cell.iy * P.GRID_N + cell.ix].powerW >= req.minPowerW) return null;
+    const sunOnly = P.nearestHaven(grid, cell.ix, cell.iy, { minPowerW: req.minPowerW, minClearance: -99 });
+    return sunOnly ? { ...sunOnly, kind: "Sun only" } : null;
+  }, [grid, cell.ix, cell.iy, req, cellOk, running]);
+
+  /* ---- actions ---- */
+  const moveTo = useCallback(
+    (c: Cell) => {
+      if ((crisis && crisis.phase !== "running") || !site.terrain) return;
+      if (!running) clearTimers();
+      setNudges((n) => ({ ...n, [siteId]: c }));
+    },
+    [siteId, site.terrain, crisis, running, clearTimers]
+  );
+  const step = (dx: number, dy: number) => moveTo({ ix: P.clamp(cell.ix + dx, 0, 20), iy: P.clamp(cell.iy + dy, 0, 20) });
+
+  const pickSite = (id: string) => {
+    if (crisis) return;
+    clearTimers();
+    setBeat(null);
+    setSiteId(id);
+  };
+  const setDelayUser = (d: number) => {
+    if (running) return;
+    clearTimers();
+    setDelayRaw(d);
+  };
+
+  const startCrisis = useCallback(() => {
+    clearTimers();
+    const c = generateCrisis(site, baseMs);
+    if (!c) return;
+    setSiteId(c.site.id);
+    setNudges((n) => ({ ...n, [c.site.id]: c.start }));
+    setDelayRaw(c.delay);
+    setOverlay("sun");
+    setCrisis({ phase: "running", sc: c.sc, startedAt: performance.now() + 250, elapsed: 0 });
+  }, [site, baseMs, clearTimers]);
+
+  const runBeat = (n: number) => {
+    clearTimers();
+    setBeat(n);
+    if (n === 4) {
+      startCrisis();
+      return;
+    }
+    setCrisis(null);
+    setTracking("vertical");
+    if (n === 1) {
+      setSiteId("shackleton");
+      setBaseMs(Date.parse("2027-05-06T00:00:00Z"));
+      setDelayRaw(0);
+      setNudges((s) => ({ ...s, shackleton: { ix: 10, iy: 3 } }));
+      setOverlay("month");
+    } else if (n === 2) {
+      setSiteId("shackleton");
+      setBaseMs(Date.parse("2027-02-14T00:00:00Z"));
+      setDelayRaw(0);
+      setNudges((s) => ({ ...s, shackleton: { ix: 12, iy: 2 } }));
+      setOverlay("sun");
+      timers.current.push(setTimeout(() => setNudges((s) => ({ ...s, shackleton: { ix: 11, iy: 2 } })), 2200));
+      timers.current.push(setTimeout(() => setNudges((s) => ({ ...s, shackleton: { ix: 10, iy: 2 } })), 3400));
+    } else if (n === 3) {
+      setSiteId("mouton");
+      setBaseMs(Date.parse("2027-02-16T00:00:00Z"));
+      setDelayRaw(0);
+      setNudges((s) => ({ ...s, mouton: { ix: 10, iy: 10 } }));
+      setOverlay("earth");
+      timers.current.push(
+        setTimeout(() => {
+          let d = 0;
+          const id = setInterval(() => {
+            d = Math.min(14, d + 0.2);
+            setDelayRaw(Math.round(d * 10) / 10);
+            if (d >= 14) clearInterval(id);
+          }, 55);
+          timers.current.push(id);
+        }, 1600)
+      );
+    }
+  };
+
+  const play = () => {
+    if (playing) {
+      clearTimers();
+      return;
+    }
+    clearTimers();
+    setPlaying(true);
+    let d = delayRaw >= 29.9 ? 0 : delayRaw;
+    const id = setInterval(() => {
+      d = Math.min(30, d + 0.1);
+      setDelayRaw(Math.round(d * 10) / 10);
+      if (d >= 30) {
+        clearInterval(id);
+        setPlaying(false);
+      }
+    }, 45);
+    timers.current.push(id);
+  };
+
+  /* ---- crisis clock ---- */
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => setTick((t) => t + 1), 100);
+    return () => clearInterval(id);
+  }, [running]);
+  const elapsed = crisis ? (running ? Math.max(0, (performance.now() - crisis.startedAt) / 1000) : crisis.elapsed) : 0;
+  useEffect(() => {
+    if (!crisis || crisis.phase !== "running") return;
+    if (delay !== delayRaw) return; // wait for the debounced clock to settle on the crisis instant
+    if (cellOk && elapsed > 0) setCrisis({ ...crisis, phase: "saved", elapsed });
+    else if (elapsed >= 15) setCrisis({ ...crisis, phase: "lost", elapsed: 15 });
+  });
+  const grade = elapsed <= 5 ? "A+" : elapsed <= 9 ? "A" : elapsed <= 12 ? "B" : "C";
+
+  /* ---- derived labels ---- */
+  const sunState = now.sunFrac > 0.98 ? "SUNLIT" : now.sunFrac > 0.02 ? "PARTIAL ECLIPSE" : "ECLIPSED";
+  const sunTone = now.sunFrac > 0.98 ? "amber" : now.sunFrac > 0.02 ? "orange" : "slate";
+  const lockLabel = now.lock === "LOCK" ? "NOMINAL LOCK" : now.lock === "GRAZING" ? "GRAZING LOCK" : "RIDGE OCCULTATION BLACKOUT";
+  const lockTone = now.lock === "LOCK" ? "cyan" : now.lock === "GRAZING" ? "blue" : "crimson";
+  const st = timeline.stats;
+  const dE = (cell.ix - 10) * 100;
+  const dN = (cell.iy - 10) * 100;
+  const monthHere = month[cell.iy * P.GRID_N + cell.ix];
+  const explorer = mode === "explorer";
+  const socClass = socPct < 20 ? "flash-crimson" : discharging && socPct < 50 ? "flash-orange" : "";
+
+  let caption: React.ReactNode = null;
+  if (beat === 1)
+    caption = (
+      <>
+        This is the sunniest cell of this 2 km patch in south-polar winter, on a ridge often called a peak of eternal
+        light. On real LOLA terrain, over the next 30 days the Sun is blocked <b>{(100 - st.sunPct).toFixed(0)}%</b> of the time, the longest night lasts{" "}
+        <b>{st.longestNightH} h</b>, and the battery {st.minSoc <= 0.001 ? <b>runs flat</b> : <>bottoms out at <b>{(st.minSoc * 100).toFixed(0)}%</b></>}.
+        Distant peaks on the horizon are enough to eclipse a Sun that never climbs above 2°.
+      </>
+    );
+  else if (beat === 2)
+    caption = (
+      <>
+        Same ridge, same hour, 200 m apart. The lander at ΔE {sgn(dE, 0)} m is <b>{sunState}</b> with{" "}
+        <b>{monthHere.toFixed(0)}%</b> sunlight over the next 30 days. Watch it step west onto the crest: permanent
+        shadow becomes mostly Sun without changing the landing date.
+      </>
+    );
+  else if (beat === 3)
+    caption = (
+      <>
+        Planned landing {fmtDay(baseMs)}: Earth sits high over the ridge. Slip the launch and libration carries it down
+        behind the terrain to the north-west. At <b>+{delayRaw.toFixed(1)}&nbsp;d</b> the link is <b>{lockLabel}</b> with Earth{" "}
+        <b>{now.earthClearance >= 0 ? sgn(now.earthClearance, 1) + "° above" : Math.abs(now.earthClearance).toFixed(1) + "° below"}</b>{" "}
+        the ridge, and the Sun is <b>{sunState}</b>.
+      </>
+    );
+  else if (beat === 4)
+    caption = (
+      <>
+        A random failure, 15 seconds. Move the lander (click the map or use the arrow keys) to a cell with enough
+        sunlight and a clear line to Earth. The safe-haven arrow is switched off until the clock stops.
+      </>
+    );
+
+  return (
+    <div className="app">
+      <header className="top">
+        <div className="brand">
+          <div className="brand-mark" aria-hidden="true" />
+          <div>
+            <h1>Lunar Landing Site Navigator</h1>
+            <p>South pole · Sun and Earth above the horizon, by site and date</p>
+          </div>
+        </div>
+        <div className="clock">
+          <div>
+            SIM UTC <b>{fmtDate(tNow)}</b>
+          </div>
+          <div>
+            {P.seasonLabel(now ? P.ephemeris(tNow).subSolarLat : 0)} · T+{delay.toFixed(1)} d
+          </div>
+        </div>
+        <div className="seg" role="group" aria-label="Audience mode">
+          <button aria-pressed={mode === "engineer"} onClick={() => setMode("engineer")}>
+            Flight Engineer
+          </button>
+          <button aria-pressed={mode === "explorer"} onClick={() => setMode("explorer")}>
+            Explorer
+          </button>
+        </div>
+        <button className="btn" onClick={() => setShowProv(true)}>
+          Data &amp; Agency Provenance
+        </button>
+      </header>
+
+      <nav className="tour" aria-label="Guided tour">
+        <div className="tour-head">
+          <span className="tour-title">Judge's 60-Second Guided Tour</span>
+          <div className="beats">
+            {BEATS.map((b, i) => (
+              <button key={b} className="beat" aria-pressed={beat === i + 1} onClick={() => runBeat(i + 1)}>
+                <span className="n">{i + 1}</span>
+                <span className="t">{b}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        {caption && <p className="tour-caption">{caption}</p>}
+      </nav>
+
+      {crisis && (
+        <div className={"crisis" + (crisis.phase === "saved" ? " saved" : "")} role="status" aria-live="polite">
+          <div className="count">{crisis.phase === "running" ? Math.max(0, 15 - elapsed).toFixed(1) : crisis.phase === "saved" ? grade : "LOS"}</div>
+          <div>
+            <h2>
+              {crisis.phase === "running"
+                ? "Crisis: " + crisis.sc.title
+                : crisis.phase === "saved"
+                ? `Mission saved in ${elapsed.toFixed(1)} s`
+                : "Loss of mission"}
+            </h2>
+            <p>
+              {crisis.phase === "lost"
+                ? "Time ran out. The gold arrow now shows the nearest cell that would have worked."
+                : crisis.sc.detail}
+            </p>
+          </div>
+          <div className="checks">
+            <span className={now.powerW >= req.minPowerW ? "ok" : "bad"}>
+              {now.powerW >= req.minPowerW ? "✓" : "✗"} POWER {now.powerW.toFixed(0)} W / need {req.minPowerW} W
+            </span>
+            <span className={now.earthClearance >= req.minClearance ? "ok" : "bad"}>
+              {now.earthClearance >= req.minClearance ? "✓" : "✗"} EARTH {sgn(now.earthClearance, 1)}° / need {sgn(req.minClearance, 1)}°
+            </span>
+          </div>
+          <div className="actions">
+            {crisis.phase !== "running" && (
+              <button className="btn primary" onClick={startCrisis}>
+                New failure
+              </button>
+            )}
+            <button
+              className="btn"
+              onClick={() => {
+                setCrisis(null);
+                setBeat(null);
+              }}
+            >
+              Exit triage
+            </button>
+          </div>
+        </div>
+      )}
+
+      <main className="grid">
+        {/* ---------------- left ---------------- */}
+        <div className="col">
+          <Panel title="Micro-terrain nudge map" tag={site.terrain ? "LOLA 20 m DEM" : "No terrain"}>
+            <NudgeMap
+              site={site}
+              cell={cell}
+              grid={grid}
+              month={month}
+              overlay={overlay}
+              haven={crisis?.phase === "running" ? null : haven}
+              onMove={moveTo}
+            />
+            <div className="map-tools">
+              <div className="dpad" role="group" aria-label="Move lander 100 metres">
+                <span />
+                <button onClick={() => step(0, 1)} aria-label="North 100 m">▲</button>
+                <span />
+                <button onClick={() => step(-1, 0)} aria-label="West 100 m">◀</button>
+                <button onClick={() => moveTo({ ix: 10, iy: 10 })} aria-label="Back to grid centre">●</button>
+                <button onClick={() => step(1, 0)} aria-label="East 100 m">▶</button>
+                <span />
+                <button onClick={() => step(0, -1)} aria-label="South 100 m">▼</button>
+                <span />
+              </div>
+              <dl className="readout">
+                <dt>ΔEast</dt>
+                <dd>{sgn(dE, 0)} m</dd>
+                <dt>ΔNorth</dt>
+                <dd>{sgn(dN, 0)} m</dd>
+                <dt>Elevation</dt>
+                <dd>{sgn(Z[cell.iy][cell.ix], 0)} m</dd>
+                <dt>30-d Sun</dt>
+                <dd>{monthHere.toFixed(0)}%</dd>
+              </dl>
+              <label className="field">
+                Overlay
+                <select id="overlay" value={overlay} onChange={(e) => setOverlay(e.target.value as Overlay)}>
+                  <option value="sun">Sunlight now</option>
+                  <option value="earth">Earth link now</option>
+                  <option value="month">30-day sunlight %</option>
+                </select>
+              </label>
+            </div>
+            <div className="legend">
+              {overlay === "sun" && (
+                <>
+                  <span><i style={{ background: C.amber }} />Sunlit</span>
+                  <span><i style={{ background: "#04060e", border: "1px solid #334155" }} />In shadow</span>
+                </>
+              )}
+              {overlay === "earth" && (
+                <>
+                  <span><i style={{ background: C.cyan }} />Nominal lock</span>
+                  <span><i style={{ background: C.blue }} />Grazing</span>
+                  <span><i style={{ background: C.crimson }} />Blackout</span>
+                </>
+              )}
+              {overlay === "month" && (
+                <>
+                  <span><i style={{ background: C.amber }} />More sunlit hours</span>
+                  <span><i style={{ background: "#04060e", border: "1px solid #334155" }} />Fewer</span>
+                </>
+              )}
+              {haven && (
+                <span className="gold">
+                  → Best safe haven ({haven.kind}): {haven.dist.toFixed(0)} m
+                </span>
+              )}
+              <span>2.1 km × 2.1 km · 100 m cells · 10 m contours</span>
+            </div>
+            {explorer && (
+              <p className="callout">
+                This is real laser-altimeter terrain. Each square is 100 m. The Sun skims the horizon here, so a ridge only <b>20 m</b> tall casts a shadow
+                half a kilometre long. Moving one or two squares can trade weeks of darkness for weeks of light.
+              </p>
+            )}
+          </Panel>
+
+          <Panel title="Sites · next 30 days" tag="Compare">
+            <div className="sites">
+              {allSites.map((s, i) => (
+                <React.Fragment key={s.id}>
+                  {i === 0 && <div className="grp-label">South pole · LOLA terrain</div>}
+                  {i === 3 && <div className="grp-label">Reference sites · smooth sphere</div>}
+                  <button className="site" aria-pressed={s.id === siteId} onClick={() => pickSite(s.id)} disabled={!!crisis}>
+                    <span className="nm">{s.name}</span>
+                    <span className="co">
+                      {Math.abs(s.lat).toFixed(2)}°{s.lat < 0 ? "S" : "N"} {s.lon.toFixed(1)}°E
+                    </span>
+                    <span className="bars">
+                      <span>Sun</span>
+                      <span className="bar">
+                        <i style={{ width: compare[i].sunPct + "%", background: C.amber }} />
+                      </span>
+                      <span className="v">{compare[i].sunPct.toFixed(0)}%</span>
+                      <span>Earth</span>
+                      <span className="bar">
+                        <i style={{ width: compare[i].commsPct + "%", background: C.cyan }} />
+                      </span>
+                      <span className="v">{compare[i].commsPct.toFixed(0)}%</span>
+                      <span>Longest night</span>
+                      <span />
+                      <span className="v">{compare[i].longestNightH} h</span>
+                    </span>
+                  </button>
+                </React.Fragment>
+              ))}
+              <form
+                className="custom"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const la = parseFloat(cLat);
+                  const lo = parseFloat(cLon);
+                  if (isNaN(la) || isNaN(lo) || crisis) return;
+                  clearTimers();
+                  setBeat(null);
+                  setCustom(P.customSite(la, lo));
+                  setSiteId("custom");
+                }}
+              >
+                <label className="field">
+                  Latitude °N
+                  <input id="c-lat" type="number" step="any" min={-90} max={90} value={cLat} onChange={(e) => setCLat(e.target.value)} />
+                </label>
+                <label className="field">
+                  Longitude °E
+                  <input id="c-lon" type="number" step="any" min={-360} max={360} value={cLon} onChange={(e) => setCLon(e.target.value)} />
+                </label>
+                <button className="btn small" type="submit" disabled={!!crisis}>
+                  Evaluate
+                </button>
+              </form>
+            </div>
+            {explorer && <p className="callout">{site.note} Bars compare every site at its current lander position.</p>}
+          </Panel>
+        </div>
+
+        {/* ---------------- middle ---------------- */}
+        <div className="col">
+          <div className="tiles">
+            <div className={"tile s-" + sunTone}>
+              <span className="k">Sun</span>
+              <span className={"pill " + (sunTone === "slate" ? "dim" : sunTone)}>{sunState}</span>
+              <span className="big">
+                {sgn(now.sunEl, 2)}°<small>elevation</small>
+              </span>
+              <span className="sub">
+                {sunEvt.active ? "Sunset in " : "Sunrise in "}
+                <b>{sunEvt.hours === null ? "30 d+" : fmtDur(sunEvt.hours)}</b>
+              </span>
+            </div>
+            <div className={"tile s-" + (now.powerW >= power.loadW ? "amber" : "crimson")}>
+              <span className="k">Array power</span>
+              <span className="big">
+                {now.powerW.toFixed(0)}
+                <small>W</small>
+              </span>
+              <span className="sub">
+                Load {power.loadW} W · net <b className={now.powerW >= power.loadW ? "" : "crimson"}>{sgn(now.powerW - power.loadW, 0)} W</b>
+              </span>
+              <span className="sub">
+                {explorer ? `${(now.sunFrac * 100).toFixed(0)}% of the Sun's disc is visible` : `Cosine eff. ${(now.cosEff * 100).toFixed(1)}% · disc ${(now.sunFrac * 100).toFixed(0)}%`}
+              </span>
+            </div>
+            <div className={"tile s-" + (socPct < 20 ? "crimson" : socPct < 50 ? "orange" : "cyan")}>
+              <span className="k">Battery state of charge</span>
+              <span className={"big " + socClass}>
+                <NumberRoll value={socPct} />
+                <small>%</small>
+              </span>
+              <span className="sub">
+                {discharging ? "Discharging" : soc >= 1 ? "Full" : "Charging"} · 30-day low <b>{(st.minSoc * 100).toFixed(0)}%</b>
+              </span>
+            </div>
+            <div className={"tile s-" + lockTone}>
+              <span className="k">Direct-to-Earth link</span>
+              <span className={"pill " + lockTone}>{lockLabel}</span>
+              <span className="big">
+                {sgn(now.earthClearance, 1)}°<small>clear</small>
+              </span>
+              <span className="sub">
+                {earthEvt.active ? "Earthset in " : "Earthrise in "}
+                <b>{earthEvt.hours === null ? "30 d+" : fmtDur(earthEvt.hours)}</b>
+                {!explorer && isFinite(now.linkMarginDb) && <> · margin <b>{sgn(now.linkMarginDb, 1)} dB</b></>}
+              </span>
+            </div>
+          </div>
+
+          <Panel title="360° horizon panorama" tag="Vertical scale exaggerated">
+            <Panorama profile={profile} timeline={timeline} now={now} />
+            <div className="legend">
+              <span><i style={{ background: C.gold }} />Sun's path over one lunar day (29.5 d)</span>
+              <span><i style={{ background: C.cyan }} />Earth's libration path</span>
+              <span><i style={{ background: "#273449" }} />Terrain seen from the lander</span>
+            </div>
+            {explorer && (
+              <p className="callout">
+                The Moon's axis is tilted only <b>1.54°</b> (Earth's is 23.4°), so at the pole the Sun never climbs. It
+                circles the horizon once every 29.5 days, and any hill along the way can eclipse it. There is no air to
+                bend or scatter light: behind a hill it is simply dark and about −200 °C.
+              </p>
+            )}
+          </Panel>
+
+          <Panel
+            title="Timeline · launch delay"
+            right={
+              <button className="btn small" onClick={play} disabled={running}>
+                {playing ? "■ Stop" : "▶ Play 30 days"}
+              </button>
+            }
+          >
+            <div className="controls">
+              <label className="field">
+                Planned landing (UTC)
+                <input
+                  id="base-date"
+                  type="date"
+                  value={new Date(baseMs).toISOString().slice(0, 10)}
+                  min="2024-01-01"
+                  max="2040-12-31"
+                  disabled={!!crisis}
+                  onChange={(e) => {
+                    const t = Date.parse(e.target.value + "T00:00:00Z");
+                    if (!isNaN(t)) {
+                      clearTimers();
+                      setBeat(null);
+                      setBaseMs(t);
+                    }
+                  }}
+                />
+              </label>
+              <label className="field">
+                Solar array
+                <select id="tracking" value={power.tracking} disabled={!!crisis} onChange={(e) => setTracking(e.target.value as P.Tracking)}>
+                  <option value="vertical">Vertical, Sun-tracking · cos(El)</option>
+                  <option value="horizontal">Flat deck · sin(El)</option>
+                </select>
+              </label>
+              <div className="slider-row" style={{ marginLeft: "auto" }}>
+                <span className="val">+{delayRaw.toFixed(1)} Days</span>
+              </div>
+            </div>
+            <input
+              id="delay"
+              type="range"
+              min={0}
+              max={30}
+              step={0.1}
+              value={delayRaw}
+              disabled={running}
+              aria-label="Launch delay in days"
+              onChange={(e) => setDelayUser(+e.target.value)}
+            />
+            <div className="spark-rows">
+              <div className="spark-labels">
+                <span className="amber">SUN</span>
+                <span className="cyan">EARTH</span>
+                <span>BATTERY</span>
+              </div>
+              <Sparkline timeline={timeline} delay={delay} onPick={setDelayUser} />
+            </div>
+            <div className="axis">
+              <span>{fmtDay(baseMs)}</span>
+              <span>+10 d</span>
+              <span>+20 d</span>
+              <span>{fmtDay(baseMs + 30 * DAY)}</span>
+            </div>
+            <div className="legend">
+              <span><i style={{ background: C.amber }} />Sunlit</span>
+              <span><i style={{ background: C.slate }} />Eclipse</span>
+              <span><i style={{ background: C.cyan }} />Earth lock</span>
+              <span><i style={{ background: C.blue }} />Grazing</span>
+              <span><i style={{ background: C.crimson }} />Comms blackout / battery flat</span>
+            </div>
+            <div className="stats">
+              <span>Sunlit <b>{st.sunPct.toFixed(0)}%</b></span>
+              <span>Longest night <b>{st.longestNightH} h</b></span>
+              <span>Earth link <b>{st.commsPct.toFixed(0)}%</b></span>
+              <span>Longest blackout <b>{fmtDur(st.longestBlackoutH)}</b></span>
+              <span>Mean power <b>{st.meanPowerW.toFixed(0)} W</b></span>
+            </div>
+            {explorer && (
+              <p className="callout">
+                Rockets slip. Drag the slider to delay the landing and watch the three stripes: a date that was sunny
+                with a clear radio link can turn dark and silent two weeks later, because the Sun has moved halfway
+                round the horizon and Earth has wobbled lower.
+              </p>
+            )}
+          </Panel>
+        </div>
+
+        {/* ---------------- right ---------------- */}
+        <div className="col col-right">
+          <Panel title="Earth libration reticle" tag="True angular scale">
+            <EarthReticle profile={profile} timeline={timeline} now={now} />
+            {explorer ? (
+              <p className="callout">
+                The Moon is <b>tidally locked</b>: one face always points at Earth, so Earth never rises or sets. It
+                hovers in one patch of sky and traces a slow loop about once a month as the Moon's tilted, oval orbit
+                lets us see slightly around its edges (libration). Near the pole Earth sits right on the horizon, so
+                that small loop decides whether the radio link works at all.
+              </p>
+            ) : (
+              <div className="legend">
+                <span><i style={{ background: C.cyan }} />30-day path, visible</span>
+                <span><i style={{ background: C.crimson }} />Occulted by ridge</span>
+                <span>Disc {(now.earthRadius * 2).toFixed(2)}°</span>
+              </div>
+            )}
+          </Panel>
+
+          {explorer ? (
+            <Panel title="What am I looking at?">
+              <div className="explain">
+                <div>
+                  <h3>Why land at the south pole?</h3>
+                  <p>Craters there never see sunlight and trap water ice. Ridges next to them get sunlight most of the time. Missions want both within driving distance.</p>
+                </div>
+                <div>
+                  <h3>Right now at {site.short}</h3>
+                  <p>
+                    The Sun is <b>{Math.abs(now.sunEl).toFixed(1)}° {now.sunEl >= 0 ? "above" : "below"}</b> a flat horizon and the terrain in that direction rises to <b>{sgn(now.sunHorizon, 1)}°</b>, so the lander is{" "}
+                    <b>{sunState.toLowerCase()}</b>. Earth is <b>{now.earthClearance >= 0 ? "visible" : "hidden"}</b>,{" "}
+                    {Math.round(now.earthRangeKm).toLocaleString("en-US")} km away.
+                  </p>
+                </div>
+                <div>
+                  <h3>How this differs from Earth</h3>
+                  <p>One lunar day lasts 29.5 Earth days. A polar lander that loses the Sun may wait days for it to return, on battery alone, with no atmosphere to hold any warmth.</p>
+                </div>
+              </div>
+            </Panel>
+          ) : (
+            <Panel title="Flight telemetry">
+              <dl className="tele">
+                <div className="grp">Solar</div>
+                <dt>Sun azimuth / elevation</dt>
+                <dd>{now.sunAz.toFixed(2)}° / {sgn(now.sunEl)}°</dd>
+                <dt>Terrain horizon at Sun azimuth</dt>
+                <dd>{sgn(now.sunHorizon)}°</dd>
+                <dt>Solar disc visible</dt>
+                <dd>{(now.sunFrac * 100).toFixed(1)}%</dd>
+                <dt>Cosine efficiency</dt>
+                <dd>{(now.cosEff * 100).toFixed(2)}%</dd>
+                <dt>Array output / load</dt>
+                <dd>{now.powerW.toFixed(0)} W / {power.loadW} W</dd>
+                <dt>Sub-solar lat / lon</dt>
+                <dd>{sgn(P.ephemeris(tNow).subSolarLat)}° / {sgn(P.ephemeris(tNow).subSolarLon, 1)}°</dd>
+                <div className="grp">Direct-to-Earth</div>
+                <dt>Earth azimuth / elevation</dt>
+                <dd>{now.earthAz.toFixed(2)}° / {sgn(now.earthEl)}°</dd>
+                <dt>Terrain horizon at Earth azimuth</dt>
+                <dd>{sgn(now.earthHorizon)}°</dd>
+                <dt>Libration lat / lon</dt>
+                <dd>{sgn(P.ephemeris(tNow).subEarthLat)}° / {sgn(P.ephemeris(tNow).subEarthLon)}°</dd>
+                <dt>Slant range</dt>
+                <dd>{Math.round(now.earthRangeKm).toLocaleString("en-US")} km</dd>
+                <dt>Free-space path loss (S-band)</dt>
+                <dd>{now.fsplDb.toFixed(1)} dB</dd>
+                <dt>Link margin</dt>
+                <dd className={isFinite(now.linkMarginDb) ? "" : "crimson"}>{isFinite(now.linkMarginDb) ? sgn(now.linkMarginDb, 1) + " dB" : "NO LINK"}</dd>
+              </dl>
+            </Panel>
+          )}
+
+          <Panel title="Crisis triage">
+            <p className="dim" style={{ margin: 0 }}>
+              A random hardware failure strikes at a random moment in the next 30 days. You have 15 seconds to move the
+              lander to a cell that keeps it powered and talking to Earth.
+            </p>
+            <button
+              className="btn primary"
+              style={{ alignSelf: "flex-start" }}
+              onClick={() => {
+                setBeat(4);
+                startCrisis();
+              }}
+              disabled={running}
+            >
+              Trigger a failure · 15 s
+            </button>
+          </Panel>
+        </div>
+      </main>
+
+      <footer className="foot">
+        <span>Sun and Earth: analytic ephemeris, within 0.06° of JPL Horizons. Terrain and horizon masks: NASA LRO LOLA elevation models.</span>
+        <span>Azimuth is measured from true local north, clockwise through east.</span>
+      </footer>
+
+      {showProv && <Provenance onClose={() => setShowProv(false)} />}
+    </div>
+  );
+}

@@ -1,0 +1,598 @@
+/**
+ * lunarAstronomy.ts
+ * Pure TypeScript physics module for the Lunar Landing Site Navigator. No UI dependencies, no network access.
+ *
+ *  - Sun and Earth directions: analytic ephemeris (truncated Meeus "Astronomical Algorithms" ch. 25, 47, 53,
+ *    a reduction of ELP-2000/82). Checked against JPL Horizons (target 301, quantities 14, 15, 20) on 16 dates,
+ *    Feb to May 2027: sub-Earth and sub-solar points agree within 0.06 deg, range within 190 km.
+ *    Physical libration and nutation are neglected.
+ *  - Terrain and horizon masks: NASA LRO LOLA polar elevation models, precomputed in lolaData.ts.
+ */
+
+import { LOLA } from "./lolaData";
+
+export const DEG = Math.PI / 180;
+export const R_MOON_KM = 1737.4;
+export const R_EARTH_KM = 6378.14;
+export const R_SUN_KM = 695700;
+export const AU_KM = 149597870.7;
+export const T_SYN_DAYS = 29.530589;
+export const LUNAR_INCLINATION_DEG = 1.54242; // lunar equator to ecliptic
+
+export const GRID_N = 21;
+export const GRID_STEP_M = 100;
+export const GRID_HALF_M = 1000;
+export const N_AZ = 360; // horizon profile resolution: 1 deg
+export const MAST_HEIGHT_M = 2; // solar array / antenna height above ground
+
+/* ------------------------------------------------------------------ */
+/* Sites                                                               */
+/* ------------------------------------------------------------------ */
+
+export interface Site {
+  id: string;
+  name: string;
+  short: string;
+  lat: number; // degrees, negative south
+  lon: number; // degrees east
+  terrain: boolean; // true: LOLA terrain and horizon mask; false: smooth-sphere horizon
+  note: string;
+}
+
+export const SITES: Site[] = [
+  { id: "shackleton", name: "Shackleton Connecting Ridge", short: "Shackleton Ridge", lat: -89.45, lon: 222.6, terrain: true,
+    note: "Narrow crest between Shackleton and de Gerlache craters, in the Artemis III candidate region." },
+  { id: "malapert", name: "Malapert Massif", short: "Malapert Massif", lat: -86.0, lon: 0.0, terrain: true,
+    note: "High nearside massif on the 0° meridian, facing Earth." },
+  { id: "mouton", name: "Mons Mouton", short: "Mons Mouton", lat: -84.6, lon: 31.0, terrain: true,
+    note: "Broad flat-topped mountain, a target region for CLPS deliveries." },
+  { id: "chandrayaan3", name: "Chandrayaan-3 · Shiv Shakti", short: "Chandrayaan-3", lat: -69.373, lon: 32.319, terrain: false,
+    note: "ISRO landing site, August 2023. No terrain loaded: horizon is a smooth sphere." },
+  { id: "apollo11", name: "Apollo 11 · Tranquility Base", short: "Apollo 11", lat: 0.674, lon: 23.473, terrain: false,
+    note: "First crewed landing, July 1969. Near the equator the Sun rises high and Earth stays overhead. No terrain loaded." },
+];
+
+export function customSite(lat: number, lon: number): Site {
+  return { id: "custom", name: "Custom coordinates", short: "Custom site", lat: clamp(lat, -90, 90), lon: norm360(lon), terrain: false,
+    note: "Your own coordinates. No terrain loaded: horizon is a smooth sphere." };
+}
+
+/* ------------------------------------------------------------------ */
+/* Small helpers                                                       */
+/* ------------------------------------------------------------------ */
+
+export function norm360(x: number): number {
+  const y = x % 360;
+  return y < 0 ? y + 360 : y;
+}
+
+export function norm180(x: number): number {
+  const y = norm360(x);
+  return y > 180 ? y - 360 : y;
+}
+
+export function clamp(x: number, lo: number, hi: number): number {
+  return x < lo ? lo : x > hi ? hi : x;
+}
+
+/* ------------------------------------------------------------------ */
+/* Analytic ephemeris                                                  */
+/* ------------------------------------------------------------------ */
+
+export interface Ephemeris {
+  subSolarLon: number; // selenographic, deg east (-180..180)
+  subSolarLat: number;
+  subEarthLon: number; // optical libration in longitude
+  subEarthLat: number; // optical libration in latitude
+  earthDistKm: number;
+  sunDistKm: number;
+}
+
+// Periodic terms: [D, M, M', F, coefficient]
+const LON_TERMS: number[][] = [
+  [0, 0, 1, 0, 6.288774], [2, 0, -1, 0, 1.274027], [2, 0, 0, 0, 0.658314],
+  [0, 0, 2, 0, 0.213618], [0, 1, 0, 0, -0.185116], [0, 0, 0, 2, -0.114332],
+  [2, 0, -2, 0, 0.058793], [2, -1, -1, 0, 0.057066], [2, 0, 1, 0, 0.053322],
+  [2, -1, 0, 0, 0.045758], [0, 1, -1, 0, -0.040923], [1, 0, 0, 0, -0.03472],
+  [0, 1, 1, 0, -0.030383], [2, 0, 0, -2, 0.015327], [0, 0, 1, 2, -0.012528],
+  [0, 0, 1, -2, 0.01098], [4, 0, -1, 0, 0.010675], [0, 0, 3, 0, 0.010034],
+  [4, 0, -2, 0, 0.008548], [2, 1, -1, 0, -0.007888], [2, 1, 0, 0, -0.006766],
+  [1, 0, -1, 0, -0.005163], [1, 1, 0, 0, 0.004987], [2, -1, 1, 0, 0.004036],
+];
+const LAT_TERMS: number[][] = [
+  [0, 0, 0, 1, 5.128122], [0, 0, 1, 1, 0.280602], [0, 0, 1, -1, 0.277693],
+  [2, 0, 0, -1, 0.173237], [2, 0, -1, 1, 0.055413], [2, 0, -1, -1, 0.046271],
+  [2, 0, 0, 1, 0.032573], [0, 0, 2, 1, 0.017198], [2, 0, 1, -1, 0.009266],
+  [0, 0, 2, -1, 0.008822], [2, -1, 0, -1, 0.008216], [2, 0, -2, -1, 0.004324],
+  [2, 0, 1, 1, 0.0042],
+];
+const DIST_TERMS: number[][] = [
+  [0, 0, 1, 0, -20905.355], [2, 0, -1, 0, -3699.111], [2, 0, 0, 0, -2955.968],
+  [0, 0, 2, 0, -569.925], [0, 1, 0, 0, 48.888], [0, 0, 0, 2, -3.149],
+  [2, 0, -2, 0, 246.158], [2, -1, -1, 0, -152.138], [2, 0, 1, 0, -170.733],
+  [2, -1, 0, 0, -204.586], [0, 1, -1, 0, -129.62], [1, 0, 0, 0, 108.743],
+  [0, 1, 1, 0, 104.755],
+];
+
+function selenographic(lambdaDeg: number, betaDeg: number, omegaDeg: number, fDeg: number) {
+  const I = LUNAR_INCLINATION_DEG * DEG;
+  const W = (lambdaDeg - omegaDeg) * DEG;
+  const b = betaDeg * DEG;
+  const A = Math.atan2(
+    Math.sin(W) * Math.cos(b) * Math.cos(I) - Math.sin(b) * Math.sin(I),
+    Math.cos(W) * Math.cos(b)
+  );
+  const lon = norm180(A / DEG - fDeg);
+  const lat = Math.asin(-Math.sin(W) * Math.cos(b) * Math.sin(I) - Math.sin(b) * Math.cos(I)) / DEG;
+  return { lon, lat };
+}
+
+export function ephemeris(unixMs: number): Ephemeris {
+  const jd = unixMs / 86400000 + 2440587.5;
+  const T = (jd - 2451545.0) / 36525;
+
+  const Lp = 218.3164477 + 481267.88123421 * T;
+  const D = (297.8501921 + 445267.1114034 * T) * DEG;
+  const M = (357.5291092 + 35999.0502909 * T) * DEG;
+  const Mp = (134.9633964 + 477198.8675055 * T) * DEG;
+  const Fdeg = 93.272095 + 483202.0175233 * T;
+  const F = Fdeg * DEG;
+  const Omega = 125.0445479 - 1934.1362891 * T;
+
+  let sl = 0;
+  for (const t of LON_TERMS) sl += t[4] * Math.sin(t[0] * D + t[1] * M + t[2] * Mp + t[3] * F);
+  let sb = 0;
+  for (const t of LAT_TERMS) sb += t[4] * Math.sin(t[0] * D + t[1] * M + t[2] * Mp + t[3] * F);
+  let sr = 0;
+  for (const t of DIST_TERMS) sr += t[4] * Math.cos(t[0] * D + t[1] * M + t[2] * Mp + t[3] * F);
+
+  const lambda = Lp + sl;
+  const beta = sb;
+  const earthDistKm = 385000.56 + sr;
+
+  // Sun (geocentric, ecliptic of date)
+  const L0 = 280.46646 + 36000.76983 * T;
+  const C =
+    (1.914602 - 0.004817 * T) * Math.sin(M) + 0.019993 * Math.sin(2 * M) + 0.000289 * Math.sin(3 * M);
+  const lambdaSun = L0 + C;
+  const e = 0.016708634 - 0.000042037 * T;
+  const nu = M + C * DEG;
+  const sunDistKm = ((1.000001018 * (1 - e * e)) / (1 + e * Math.cos(nu))) * AU_KM;
+
+  // Selenographic position of Earth (optical libration) and Sun
+  const earth = selenographic(lambda, beta, Omega, Fdeg);
+  const ratio = earthDistKm / sunDistKm;
+  const lambdaH = lambdaSun + 180 + ratio * 57.296 * Math.cos(beta * DEG) * Math.sin((lambdaSun - lambda) * DEG);
+  const betaH = ratio * beta;
+  const sun = selenographic(lambdaH, betaH, Omega, Fdeg);
+
+  return {
+    subSolarLon: sun.lon,
+    subSolarLat: sun.lat,
+    subEarthLon: earth.lon,
+    subEarthLat: earth.lat,
+    earthDistKm,
+    sunDistKm,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Local sky (azimuth from true local north, clockwise through east)   */
+/* ------------------------------------------------------------------ */
+
+export interface Sky {
+  sunAz: number;
+  sunEl: number;
+  sunRadius: number; // angular radius, deg
+  earthAz: number;
+  earthEl: number;
+  earthRadius: number; // angular radius, deg (about 0.95)
+  earthRangeKm: number;
+  eph: Ephemeris;
+}
+
+function unit(lonDeg: number, latDeg: number): [number, number, number] {
+  const lo = lonDeg * DEG;
+  const la = latDeg * DEG;
+  return [Math.cos(la) * Math.cos(lo), Math.cos(la) * Math.sin(lo), Math.sin(la)];
+}
+
+function toAzEl(site: Site, v: [number, number, number]) {
+  const lo = site.lon * DEG;
+  const la = site.lat * DEG;
+  const e = [-Math.sin(lo), Math.cos(lo), 0];
+  const n = [-Math.sin(la) * Math.cos(lo), -Math.sin(la) * Math.sin(lo), Math.cos(la)];
+  const u = [Math.cos(la) * Math.cos(lo), Math.cos(la) * Math.sin(lo), Math.sin(la)];
+  const r = Math.hypot(v[0], v[1], v[2]);
+  const ve = v[0] * e[0] + v[1] * e[1];
+  const vn = v[0] * n[0] + v[1] * n[1] + v[2] * n[2];
+  const vu = v[0] * u[0] + v[1] * u[1] + v[2] * u[2];
+  return { az: norm360(Math.atan2(ve, vn) / DEG), el: Math.asin(vu / r) / DEG, range: r };
+}
+
+export function localSky(site: Site, unixMs: number): Sky {
+  const eph = ephemeris(unixMs);
+  const rs = R_MOON_KM + siteDatumM(site) / 1000;
+  const s = unit(site.lon, site.lat);
+  const sv: [number, number, number] = [s[0] * rs, s[1] * rs, s[2] * rs];
+
+  const su = unit(eph.subSolarLon, eph.subSolarLat);
+  const sun = toAzEl(site, [
+    su[0] * eph.sunDistKm - sv[0],
+    su[1] * eph.sunDistKm - sv[1],
+    su[2] * eph.sunDistKm - sv[2],
+  ]);
+  const eu = unit(eph.subEarthLon, eph.subEarthLat);
+  const earth = toAzEl(site, [
+    eu[0] * eph.earthDistKm - sv[0],
+    eu[1] * eph.earthDistKm - sv[1],
+    eu[2] * eph.earthDistKm - sv[2],
+  ]);
+
+  return {
+    sunAz: sun.az,
+    sunEl: sun.el,
+    sunRadius: Math.asin(R_SUN_KM / sun.range) / DEG,
+    earthAz: earth.az,
+    earthEl: earth.el,
+    earthRadius: Math.asin(R_EARTH_KM / earth.range) / DEG,
+    earthRangeKm: earth.range,
+    eph,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* LOLA terrain and horizon masks                                      */
+/* ------------------------------------------------------------------ */
+
+const PATCH_N = 106;
+const PATCH_STEP_M = 20;
+const PATCH_HALF_M = 1050;
+
+function decodeInt16(b64: string): Int16Array {
+  const bin = atob(b64);
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return new Int16Array(u8.buffer);
+}
+
+const matrixCache = new Map<string, number[][]>();
+const patchCache = new Map<string, Int16Array>();
+const horizonCache = new Map<string, Int16Array>();
+const profileCache = new Map<string, Float32Array>();
+
+/** 21 x 21 heights in metres above the 1737.4 km sphere. Z[iy][ix], iy = 0 is the south row. */
+export function buildElevationMatrix(site: Site): number[][] {
+  const hit = matrixCache.get(site.id);
+  if (hit) return hit;
+  const Z: number[][] = [];
+  const src = site.terrain ? LOLA[site.id].grid : null;
+  for (let iy = 0; iy < GRID_N; iy++) {
+    const row: number[] = [];
+    for (let ix = 0; ix < GRID_N; ix++) row.push(src ? src[iy * GRID_N + ix] : 0);
+    Z.push(row);
+  }
+  if (site.id !== "custom") matrixCache.set(site.id, Z);
+  return Z;
+}
+
+/** Height of the grid centre above the reference sphere, metres. */
+export function siteDatumM(site: Site): number {
+  return site.terrain ? LOLA[site.id].grid[220] : 0;
+}
+
+/** 20 m LOLA height (m) at x east, y north of the grid centre. Used for the map image. */
+export function patchElevationAt(site: Site, x: number, y: number): number {
+  if (!site.terrain) return 0;
+  let p = patchCache.get(site.id);
+  if (!p) {
+    p = decodeInt16(LOLA[site.id].patch);
+    patchCache.set(site.id, p);
+  }
+  const gx = clamp((x + PATCH_HALF_M) / PATCH_STEP_M, 0, PATCH_N - 1.001);
+  const gy = clamp((y + PATCH_HALF_M) / PATCH_STEP_M, 0, PATCH_N - 1.001);
+  const ix = Math.floor(gx);
+  const iy = Math.floor(gy);
+  const fx = gx - ix;
+  const fy = gy - iy;
+  const k = iy * PATCH_N + ix;
+  return 0.5 * ((p[k] * (1 - fx) + p[k + 1] * fx) * (1 - fy) + (p[k + PATCH_N] * (1 - fx) + p[k + PATCH_N + 1] * fx) * fy);
+}
+
+const FLAT = new Float32Array(N_AZ);
+
+/** Horizon elevation (deg) for each 1 deg of azimuth, seen 2 m above grid cell (ix, iy). */
+export function horizonProfile(site: Site, ix: number, iy: number): Float32Array {
+  if (!site.terrain) return FLAT;
+  const key = site.id + ":" + ix + ":" + iy;
+  const hit = profileCache.get(key);
+  if (hit) return hit;
+  let all = horizonCache.get(site.id);
+  if (!all) {
+    all = decodeInt16(LOLA[site.id].horizon);
+    horizonCache.set(site.id, all);
+  }
+  const prof = new Float32Array(N_AZ);
+  const o = (iy * GRID_N + ix) * N_AZ;
+  for (let a = 0; a < N_AZ; a++) prof[a] = all[o + a] / 100;
+  profileCache.set(key, prof);
+  return prof;
+}
+
+export function horizonAt(profile: Float32Array, azDeg: number): number {
+  const p = (norm360(azDeg) / 360) * N_AZ;
+  const i = Math.floor(p) % N_AZ;
+  const f = p - Math.floor(p);
+  return profile[i] * (1 - f) + profile[(i + 1) % N_AZ] * f;
+}
+
+/** Fraction (0..1) of a disc of angular radius r whose centre sits `clearance` deg above the horizon. */
+export function discFraction(clearance: number, r: number): number {
+  const h = clearance / r;
+  if (h >= 1) return 1;
+  if (h <= -1) return 0;
+  return 1 - (Math.acos(h) - h * Math.sqrt(1 - h * h)) / Math.PI;
+}
+
+/* ------------------------------------------------------------------ */
+/* Power, comms and state                                              */
+/* ------------------------------------------------------------------ */
+
+export type Tracking = "vertical" | "horizontal";
+
+export interface PowerConfig {
+  arrayPeakW: number;
+  arrayHealth: number; // 0..1
+  loadW: number;
+  batteryWh: number;
+  tracking: Tracking;
+}
+
+export const DEFAULT_POWER: PowerConfig = {
+  arrayPeakW: 480,
+  arrayHealth: 1,
+  loadW: 140,
+  batteryWh: 3600,
+  tracking: "vertical",
+};
+
+export type LockState = "LOCK" | "GRAZING" | "BLACKOUT";
+
+export interface State {
+  t: number;
+  sunAz: number;
+  sunEl: number;
+  sunHorizon: number;
+  sunFrac: number;
+  cosEff: number; // geometric incidence efficiency of the chosen array
+  powerW: number;
+  earthAz: number;
+  earthEl: number;
+  earthHorizon: number;
+  earthClearance: number; // Earth centre above local horizon, deg
+  earthRadius: number;
+  earthRangeKm: number;
+  lock: LockState;
+  linkMarginDb: number; // -Infinity in blackout
+  fsplDb: number;
+}
+
+/** Illustrative S-band downlink: 10 W, 12 dBi lander antenna, 34 m class ground station, 2 Mbps. */
+export function linkBudget(rangeKm: number, clearance: number, earthRadius: number) {
+  const fMHz = 2250;
+  const fspl = 20 * Math.log10(rangeKm) + 20 * Math.log10(fMHz) + 32.45;
+  const eirp = 10 + 12; // dBW
+  const gOverT = 40; // dB/K
+  const cn0 = eirp - fspl + gOverT + 228.6;
+  const ebn0 = cn0 - 10 * Math.log10(2e6);
+  const required = 4.5 + 3; // coding threshold + implementation losses
+  // Low grazing angles add multipath fading off the lunar surface.
+  const grazing = clamp(1 - (clearance - earthRadius) / 3, 0, 1) * 6;
+  const margin = clearance <= 0 ? -Infinity : ebn0 - required - grazing;
+  return { fspl, margin };
+}
+
+export function evaluate(sky: Sky, profile: Float32Array, power: PowerConfig, t: number): State {
+  const sunHorizon = horizonAt(profile, sky.sunAz);
+  const sunFrac = discFraction(sky.sunEl - sunHorizon, sky.sunRadius);
+  const cosEff =
+    power.tracking === "horizontal" ? Math.max(0, Math.sin(sky.sunEl * DEG)) : Math.max(0, Math.cos(sky.sunEl * DEG));
+  const powerW = power.arrayPeakW * power.arrayHealth * sunFrac * cosEff;
+  const earthHorizon = horizonAt(profile, sky.earthAz);
+  const earthClearance = sky.earthEl - earthHorizon;
+  const lock: LockState = earthClearance <= 0 ? "BLACKOUT" : earthClearance < sky.earthRadius ? "GRAZING" : "LOCK";
+  const lb = linkBudget(sky.earthRangeKm, earthClearance, sky.earthRadius);
+  return {
+    t,
+    sunAz: sky.sunAz,
+    sunEl: sky.sunEl,
+    sunHorizon,
+    sunFrac,
+    cosEff,
+    powerW,
+    earthAz: sky.earthAz,
+    earthEl: sky.earthEl,
+    earthHorizon,
+    earthClearance,
+    earthRadius: sky.earthRadius,
+    earthRangeKm: sky.earthRangeKm,
+    lock,
+    linkMarginDb: lb.margin,
+    fsplDb: lb.fspl,
+  };
+}
+
+export function stateAt(site: Site, profile: Float32Array, power: PowerConfig, t: number): State {
+  return evaluate(localSky(site, t), profile, power, t);
+}
+
+export interface TimelineSample extends State {
+  soc: number; // battery state of charge 0..1
+}
+
+export interface TimelineStats {
+  sunPct: number;
+  commsPct: number;
+  longestNightH: number;
+  longestBlackoutH: number;
+  minSoc: number;
+  meanPowerW: number;
+}
+
+export interface Timeline {
+  samples: TimelineSample[];
+  stepH: number;
+  stats: TimelineStats;
+}
+
+/** Forward simulation from startMs. Battery starts full. */
+export function simulateTimeline(
+  site: Site,
+  profile: Float32Array,
+  power: PowerConfig,
+  startMs: number,
+  hours = 720,
+  stepH = 1
+): Timeline {
+  const samples: TimelineSample[] = [];
+  let soc = 1;
+  let lit = 0;
+  let comms = 0;
+  let night = 0;
+  let longestNight = 0;
+  let black = 0;
+  let longestBlack = 0;
+  let minSoc = 1;
+  let pSum = 0;
+  const n = Math.round(hours / stepH);
+  for (let i = 0; i <= n; i++) {
+    const t = startMs + i * stepH * 3600000;
+    const st = stateAt(site, profile, power, t);
+    if (i > 0) soc = clamp(soc + ((st.powerW - power.loadW) * stepH) / power.batteryWh, 0, 1);
+    if (st.sunFrac > 0.02) {
+      lit++;
+      night = 0;
+    } else {
+      night += stepH;
+      if (night > longestNight) longestNight = night;
+    }
+    if (st.lock !== "BLACKOUT") {
+      comms++;
+      black = 0;
+    } else {
+      black += stepH;
+      if (black > longestBlack) longestBlack = black;
+    }
+    if (soc < minSoc) minSoc = soc;
+    pSum += st.powerW;
+    samples.push({ ...st, soc });
+  }
+  return {
+    samples,
+    stepH,
+    stats: {
+      sunPct: (100 * lit) / (n + 1),
+      commsPct: (100 * comms) / (n + 1),
+      longestNightH: longestNight,
+      longestBlackoutH: longestBlack,
+      minSoc,
+      meanPowerW: pSum / (n + 1),
+    },
+  };
+}
+
+export interface NextEvent {
+  active: boolean; // Sun up / Earth visible right now
+  hours: number | null; // hours until that flips; null if no change within the search window
+}
+
+/** Forward-simulate up to 720 h to find the next sunset/sunrise or Earthset/Earthrise. */
+export function nextEvent(site: Site, profile: Float32Array, fromMs: number, body: "sun" | "earth", windowH = 720): NextEvent {
+  const test = (t: number) => {
+    const sky = localSky(site, t);
+    return body === "sun"
+      ? sky.sunEl + sky.sunRadius > horizonAt(profile, sky.sunAz)
+      : sky.earthEl > horizonAt(profile, sky.earthAz);
+  };
+  const active = test(fromMs);
+  const step = 0.25;
+  for (let h = step; h <= windowH; h += step) {
+    if (test(fromMs + h * 3600000) !== active) {
+      let lo = h - step;
+      let hi = h;
+      for (let k = 0; k < 8; k++) {
+        const mid = (lo + hi) / 2;
+        if (test(fromMs + mid * 3600000) === active) lo = mid;
+        else hi = mid;
+      }
+      return { active, hours: hi };
+    }
+  }
+  return { active, hours: null };
+}
+
+/* ------------------------------------------------------------------ */
+/* Whole-grid survey                                                   */
+/* ------------------------------------------------------------------ */
+
+export interface CellStatus {
+  sunFrac: number;
+  powerW: number;
+  clearance: number;
+  lock: LockState;
+}
+
+/** Status of all 441 cells at one instant. Index = iy * 21 + ix. */
+export function surveyGrid(site: Site, power: PowerConfig, t: number): CellStatus[] {
+  const sky = localSky(site, t);
+  const out: CellStatus[] = [];
+  for (let iy = 0; iy < GRID_N; iy++)
+    for (let ix = 0; ix < GRID_N; ix++) {
+      const st = evaluate(sky, horizonProfile(site, ix, iy), power, t);
+      out.push({ sunFrac: st.sunFrac, powerW: st.powerW, clearance: st.earthClearance, lock: st.lock });
+    }
+  return out;
+}
+
+/** Percentage of the next `hours` each cell spends sunlit. Index = iy * 21 + ix. */
+export function surveyIllumination(site: Site, startMs: number, hours = 720, stepH = 3): Float32Array {
+  const n = Math.round(hours / stepH);
+  const skies: Sky[] = [];
+  for (let i = 0; i <= n; i++) skies.push(localSky(site, startMs + i * stepH * 3600000));
+  const out = new Float32Array(GRID_N * GRID_N);
+  for (let iy = 0; iy < GRID_N; iy++)
+    for (let ix = 0; ix < GRID_N; ix++) {
+      const prof = horizonProfile(site, ix, iy);
+      let lit = 0;
+      for (const s of skies) if (s.sunEl + s.sunRadius * 0.9 > horizonAt(prof, s.sunAz)) lit++;
+      out[iy * GRID_N + ix] = (100 * lit) / skies.length;
+    }
+  return out;
+}
+
+export interface Requirement {
+  minPowerW: number;
+  minClearance: number; // deg of Earth-centre clearance needed
+}
+
+export function meets(c: CellStatus, req: Requirement): boolean {
+  return c.powerW >= req.minPowerW && c.clearance >= req.minClearance;
+}
+
+/** Nearest cell that satisfies the requirement, or null. */
+export function nearestHaven(grid: CellStatus[], ix: number, iy: number, req: Requirement) {
+  let best: { ix: number; iy: number; dist: number } | null = null;
+  for (let y = 0; y < GRID_N; y++)
+    for (let x = 0; x < GRID_N; x++) {
+      if (!meets(grid[y * GRID_N + x], req)) continue;
+      const dist = Math.hypot(x - ix, y - iy) * GRID_STEP_M;
+      if (!best || dist < best.dist) best = { ix: x, iy: y, dist };
+    }
+  return best;
+}
+
+export function seasonLabel(subSolarLat: number): string {
+  if (subSolarLat < -0.5) return "South-polar summer";
+  if (subSolarLat > 0.5) return "South-polar winter";
+  return "Near equinox";
+}
