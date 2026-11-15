@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as P from "./physics/lunarAstronomy";
 import { LanderGame, LIMITS } from "./Lander";
-import { STR, UI, Lang } from "./i18n";
+import { STR, UI, PROV, Lang } from "./i18n";
 
 const LangCtx = React.createContext<Lang>("en");
 const trFor = (lang: Lang) => (text: string) => (lang === "en" ? text : UI[lang][text] ?? text);
@@ -815,145 +815,79 @@ function Gauge({ label, value, tone, text }: { label: string; value: number; ton
 /* Provenance drawer                                                   */
 /* ------------------------------------------------------------------ */
 
-function Provenance({ onClose }: { onClose: () => void }) {
+function Provenance({ onClose, lang }: { onClose: () => void; lang: Lang }) {
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
   }, [onClose]);
+  const t = PROV[lang];
+  const S = (k: string) => t[k] as string;
+  const A = (k: string) => t[k] as string[];
+  const link = (href: string, label: string) => (
+    <a className="btn link" href={href} target="_blank" rel="noopener noreferrer">
+      {label}
+    </a>
+  );
   return (
     <div className="backdrop" onClick={onClose}>
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="prov-h" onClick={(e) => e.stopPropagation()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="prov-h" lang={lang} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-          <h2 id="prov-h">Data &amp; Agency Provenance</h2>
+          <h2 id="prov-h">{S("title")}</h2>
           <button className="btn small" onClick={onClose}>
-            Close
+            {S("close")}
           </button>
         </div>
-        <p className="dim">
-          Everything on this page is computed in your browser with no network calls. The terrain was extracted from
-          NASA archives ahead of time and is embedded in the page.
-        </p>
+        <p className="dim">{S("intro")}</p>
         <section>
-          <h3>1 · Ephemeris engine · validated against JPL Horizons</h3>
-          <p>
-            Sun and Earth directions come from an analytic lunar theory (Meeus, Astronomical Algorithms, a truncation of
-            ELP-2000/82): Moon longitude, latitude and distance, solar longitude, then optical libration and the
-            sub-solar point using the 1.54242° inclination of the lunar equator. Each instant yields the sub-Earth and
-            sub-solar points, which are rotated into the site's local east-north-up frame.
-          </p>
-          <p>
-            Checked against JPL Horizons (DE440/441; target 301, observer quantities 14, 15 and 20) on 16 dates from 10
-            Feb to 11 May 2027: sub-Earth point within <b>0.04°</b>, sub-solar point within <b>0.06°</b>, Earth-Moon
-            range within <b>190 km</b>. The Sun's disc is 0.53° wide, so rise and set times carry an uncertainty of
-            roughly an hour from this source.
-          </p>
-          <p>
-            Each time the landing date changes, the app asks JPL Horizons for hourly Sun and Earth positions for the
-            following 31 days. If that call succeeds the header shows DATA: LIVE FEED and those values are used
-            directly; if the browser or network blocks it, the built-in engine takes over and the header shows DATA:
-            LOCAL CACHE.
-          </p>
-          <p className="sim">
-            Not modelled: physical libration, nutation, and the offset between Earth's centre and a specific ground
-            station (up to about 1°).
-          </p>
-          <div className="links">
-            <a className="btn link" href="https://ssd.jpl.nasa.gov/horizons/" target="_blank" rel="noopener noreferrer">
-              Verify in JPL Horizons
-            </a>
-          </div>
+          <h3>{S("h1")}</h3>
+          <p>{S("p1a")}</p>
+          <p><Rich text={S("p1b")} /></p>
+          <p>{S("p1c")}</p>
+          <p className="sim">{S("p1d")}</p>
+          <div className="links">{link("https://ssd.jpl.nasa.gov/horizons/", S("l1"))}</div>
         </section>
         <section>
-          <h3>2 · Topography &amp; horizon masks · NASA LRO LOLA</h3>
+          <h3>{S("h2")}</h3>
+          <p>{S("p2a")}</p>
+          <p className="sim">{S("p2b")}</p>
           <p>
-            The four south-pole sites use Lunar Orbiter Laser Altimeter gridded elevation from the NASA PDS
-            Geosciences Node: <span className="mono">LDEM_80S_20M</span> (20 m per pixel) around the lander and{" "}
-            <span className="mono">LDEM_75S_240M</span> (240 m per pixel) out to 300 km. For each of the 441 lander
-            positions and every 1° of azimuth, a ray is marched over the curved Moon from 2 m above the surface and the
-            highest terrain angle is kept. With no atmosphere there is no refraction, so that line is the horizon.
-          </p>
-          <p className="sim">
-            Limits: masks are sampled at 1° of azimuth and 20 m near the lander, so boulders and metre-scale relief are
-            absent, and the LOLA grids are interpolated between laser tracks. The Chandrayaan-3, Apollo 11 and custom
-            sites have no terrain loaded and use a smooth-sphere horizon.
-          </p>
-          <p>
-            For comparison, LOLA-based modelling by Gläser et al. (2018) found average surface illumination of 77.1% to
-            88.0% at the best polar sites, with the maximum on the Shackleton–de Gerlache ridge.{" "}
+            {S("p2c")}{" "}
             <a href="https://ntrs.nasa.gov/archive/nasa/casi.ntrs.nasa.gov/20170007365.pdf" target="_blank" rel="noopener noreferrer" style={{ color: C.cyan }}>
-              NASA NTRS record
+              {S("ntrs")}
             </a>
           </p>
           <div className="links">
-            <a className="btn link" href="https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/polar/img/" target="_blank" rel="noopener noreferrer">
-              LOLA polar DEMs (PDS)
-            </a>
-            <a
-              className="btn link"
-              href="https://quickmap.lroc.im-ldi.com/?prjExtent=-3673694.2760943%2C-1737400%2C3673694.2760943%2C1737400&earthShadowEnabled=true&proj=10&stack=3314"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              LROC Quickmap 3D Base
-            </a>
-            <a className="btn link" href="https://trek.nasa.gov/moon/" target="_blank" rel="noopener noreferrer">
-              NASA Moon Trek Explorer
-            </a>
+            {link("https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/polar/img/", S("l2a"))}
+            {link("https://quickmap.lroc.im-ldi.com/?prjExtent=-3673694.2760943%2C-1737400%2C3673694.2760943%2C1737400&earthShadowEnabled=true&proj=10&stack=3314", "LROC Quickmap 3D Base")}
+            {link("https://trek.nasa.gov/moon/", "NASA Moon Trek Explorer")}
           </div>
         </section>
         <section>
-          <h3>3 · International collaboration · CSA</h3>
-          <p>
-            South-polar surface missions are an international effort under the Artemis Accords. The three candidate
-            sites sit in the region targeted by Artemis and CLPS planning; the Canadian Space Agency page gives context
-            on partner contributions to lunar exploration.
-          </p>
-          <div className="links">
-            <a className="btn link" href="https://www.asc-csa.gc.ca/eng/astronomy/moon-exploration/" target="_blank" rel="noopener noreferrer">
-              CSA Moon Exploration Details
-            </a>
-          </div>
+          <h3>{S("h3")}</h3>
+          <p>{S("p3")}</p>
+          <div className="links">{link("https://www.asc-csa.gc.ca/eng/astronomy/moon-exploration/", "CSA Moon Exploration Details")}</div>
         </section>
         <section>
-          <h3>Validation benchmarks</h3>
+          <h3>{S("h4")}</h3>
           <ul>
-            <li>
-              <b>Ephemeris vs JPL Horizons:</b> 16 dates, Feb to May 2027. Largest differences: sub-Earth point 0.04°,
-              sub-solar point 0.06°, range 190 km.
-            </li>
-            <li>
-              <b>Illumination vs published LOLA modelling:</b> the sunniest cell of this tool's Shackleton ridge patch is
-              lit 90.9% of 2027 to 2028 (2 m mast, any part of the solar disc). Gläser et al. report 88.0% as the
-              highest average at surface level on the same ridge. The mast height and partial-disc rule both push this
-              tool's figure up slightly.
-            </li>
-            <li>
-              <b>IM-2 hindcast:</b> for the Athena landing site at about 17:30 UTC on 6 March 2025 the tool reports the
-              Sun 2.5° above the horizon and unobstructed, Earth 12° clear of the terrain, and a 3.6° slope. The lander
-              came to rest on its side in a small crater, a hazard below the 20 m resolution of the terrain data.
-            </li>
+            {A("v").map((x, i) => (
+              <li key={i}><Rich text={x} /></li>
+            ))}
           </ul>
         </section>
         <section>
-          <h3>Lander assumptions (illustrative)</h3>
+          <h3>{S("h5")}</h3>
           <ul>
-            <li>Array 480 W at normal incidence. Vertical Sun-tracking output scales with cos(El); a flat deck array scales with sin(El).</li>
-            <li>Load 140 W continuous, battery 3.6 kWh, starts full on the planned landing date.</li>
-            <li>Thermal: one lumped node (200 kJ/K, 1 m² effective radiator, 250 W absorbed when sunlit), 100 W heaters below −20 °C, survival limit −40 °C. Heaters draw from the battery; when it is flat the lander cools freely.</li>
-            <li>Relay option: treats a relay orbiter as always in view, which a real constellation would only approximate.</li>
-            <li>Downlink: S-band 2.25 GHz, 10 W, 12 dBi antenna, 34 m class ground station (G/T 40 dB/K), 2 Mbps, 7.5 dB required Eb/N0 including losses, up to 6 dB multipath fade at grazing angles.</li>
-            <li>Earth lock states: nominal when the full 1.9° disc clears the ridge, grazing when the centre is above it, blackout when the centre is below.</li>
+            {A("a").map((x, i) => (
+              <li key={i}>{x}</li>
+            ))}
           </ul>
         </section>
       </div>
     </div>
   );
 }
-
-/* ------------------------------------------------------------------ */
-/* App                                                                 */
-/* ------------------------------------------------------------------ */
 
 /* ------------------------------------------------------------------ */
 /* Starfield, polar view, window finder                                */
@@ -2493,7 +2427,7 @@ export default function App() {
       </div>
 
       {briefing && <Briefing lang={lang} onClose={() => setBriefing(false)} />}
-      {showProv && <Provenance onClose={() => setShowProv(false)} />}
+      {showProv && <Provenance lang={lang} onClose={() => setShowProv(false)} />}
     </div>
     </LangCtx.Provider>
   );
