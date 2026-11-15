@@ -18,6 +18,8 @@ is the Sun above the local horizon (power), and is Earth above it (direct-to-Ear
 - One-click best-cell search, CSV export of the 30-day timeline, and a top-down polar view of sunlight and Earth direction.
 - Landing-surface check: slope and roughness of every 100 m cell from the 20 m LOLA data, with a hazard overlay
   (flat up to 8 deg, caution to 15 deg, hazard above).
+- Two sections: **Mission Planner** (the analysis tool) and **Lander Game**, a physics landing simulator flown over
+  a real LOLA terrain cross-section with lunar gravity, limited fuel and touchdown limits on speed, tilt and slope.
 - Flight Engineer mode (raw telemetry) and Explorer mode (plain-English explanations).
 - Tries a live JPL Horizons feed for the chosen date and falls back to the built-in engine if the call is blocked.
 - Three survival gauges (battery, comms link, solar efficiency), a guided tour and a 15-second "crisis triage" game
@@ -34,7 +36,8 @@ network it also tries the live JPL Horizons feed.
 |---|---|
 | `src/physics/lunarAstronomy.ts` | Ephemeris, local sky geometry, power, link budget, timeline simulation. No UI code. |
 | `src/physics/lolaData.ts` | LOLA terrain extract: elevation grids and precomputed horizon masks. |
-| `src/App.tsx` | React user interface. |
+| `src/App.tsx` | React user interface (Mission Planner). |
+| `src/Lander.tsx` | Landing simulator game. |
 | `src/styles.css` | Styles. |
 | `build.mjs` | Inlines the bundle and styles into `index.html`. |
 

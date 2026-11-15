@@ -305,3 +305,30 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
 .timectl { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .timectl input { background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 6px; padding: 6px 8px; font-size: 12px; font-family: var(--mono); color-scheme: dark; }
 .seg button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ---- v6: sections and landing simulator ---- */
+.modeseg { border-color: rgba(6, 182, 212, 0.6); }
+.modeseg button[aria-pressed="true"] { background: var(--cyan); color: #03121a; }
+.game-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+@media (min-width: 1000px) { .game-grid { grid-template-columns: minmax(0, 1fr) 300px; } }
+.game-side { display: flex; flex-direction: column; gap: 14px; font-size: 13px; }
+.game-side h3 { margin: 0 0 4px; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
+.game-side p { margin: 0 0 6px; color: var(--dim); }
+.game-side ul { margin: 0; padding-left: 18px; color: var(--text); font-family: var(--mono); font-size: 12px; }
+.lander { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.lander-stage { position: relative; border: 1px solid var(--line-2); border-radius: 8px; overflow: hidden; background: #02030a; }
+.lander-stage canvas { display: block; width: 100%; height: min(62vh, 560px); min-height: 320px; touch-action: none; }
+.lander-hud { position: absolute; top: 10px; left: 12px; right: 12px; display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 11px; letter-spacing: 0.06em; color: var(--dim); pointer-events: none; }
+.lander-hud b { color: inherit; font-size: 13px; margin-left: 4px; }
+.lander-hud span { color: var(--dim); } .lander-hud .ok { color: #4ade80; } .lander-hud .bad { color: var(--crimson); }
+.lander-hud .fuel { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+.lander-hud .fuel i { display: inline-block; width: 120px; height: 8px; background: rgba(30, 41, 59, 0.9); border-radius: 4px; overflow: hidden; }
+.lander-hud .fuel em { display: block; height: 100%; }
+.lander-msg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(420px, 88%); background: rgba(8, 13, 26, 0.86); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); border: 1px solid var(--line-2); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.lander-msg h3 { margin: 0; font-size: 17px; letter-spacing: 0.04em; }
+.lander-msg p, .lander-msg ul { margin: 0; color: var(--text); font-size: 13px; }
+.lander-msg ul { padding-left: 18px; }
+.lander-msg.good { border-color: #22c55e; } .lander-msg.good h3 { color: #4ade80; }
+.lander-msg.fail { border-color: var(--crimson); } .lander-msg.fail h3 { color: var(--crimson); }
+.lander-pad { display: flex; flex-wrap: wrap; gap: 8px; }
+.lander-pad .btn { padding: 10px 16px; user-select: none; -webkit-user-select: none; touch-action: none; }
