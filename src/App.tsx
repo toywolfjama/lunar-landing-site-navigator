@@ -2,6 +2,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as P from "./physics/lunarAstronomy";
 import { LanderGame, LIMITS } from "./Lander";
+import { STR, Lang } from "./i18n";
+
+/** Renders **bold** spans inside a translated string. */
+function Rich({ text }: { text: string }) {
+  return <>{text.split("**").map((part, i) => (i % 2 ? <b key={i}>{part}</b> : <React.Fragment key={i}>{part}</React.Fragment>))}</>;
+}
+const enc = (v: number) => (v < 0 ? "n" + Math.round(-v) : String(Math.round(v)));
+const dec = (v: string) => (v[0] === "n" ? -parseInt(v.slice(1), 10) : parseInt(v, 10));
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -203,6 +211,7 @@ function NudgeMap(props: {
   sunAz: number;
   sunLit: boolean;
   slope: { mean: Float32Array; max: Float32Array; rough: Float32Array };
+  slopeSafe: number;
   onMove: (c: Cell) => void;
 }) {
   const { cell, grid, month, overlay, haven } = props;
@@ -224,7 +233,7 @@ function NudgeMap(props: {
           op = 0.3;
         } else if (overlay === "slope") {
           const sl = props.slope.max[i];
-          fill = sl <= P.SLOPE_SAFE_DEG ? GREEN : sl <= P.SLOPE_LIMIT_DEG ? C.amber : C.crimson;
+          fill = sl <= props.slopeSafe ? GREEN : sl <= P.SLOPE_LIMIT_DEG ? C.amber : C.crimson;
           op = 0.42;
         } else if (overlay === "none") {
           op = 0;
@@ -236,7 +245,7 @@ function NudgeMap(props: {
         out.push(<rect key={i} x={ix} y={20 - iy} width={1.02} height={1.02} fill={fill} fillOpacity={op} />);
       }
     return out;
-  }, [grid, month, overlay, props.slope]);
+  }, [grid, month, overlay, props.slope, props.slopeSafe]);
 
   const cx = cell.ix + 0.5;
   const cy = 20 - cell.iy + 0.5;
@@ -745,18 +754,15 @@ function generateCrisis(preferred: P.Site, baseMs: number) {
 /* Commander's briefing (onboarding)                                   */
 /* ------------------------------------------------------------------ */
 
-const BRIEFING = [
-  ["Find the high ground", "The Sun barely clears the horizon at the South Pole. Find the high ground."],
-  ["Keep Earth in view", "Earth wobbles in the sky. Avoid mountain blockages."],
-  ["Fly the lander", "Use the D-pad to navigate. Watch your survival gauges."],
-];
 
-function Briefing({ onClose }: { onClose: () => void }) {
+function Briefing({ onClose, lang }: { onClose: () => void; lang: Lang }) {
   const [i, setI] = useState(0);
+  const L = STR[lang];
+  const BRIEFING = [[L.b1h, L.b1], [L.b2h, L.b2], [L.b3h, L.b3]];
   return (
     <div className="backdrop brief-bg">
       <div className="modal brief" role="dialog" aria-modal="true" aria-labelledby="brief-h">
-        <span className="tour-title">Commander's Briefing · {i + 1} of {BRIEFING.length}</span>
+        <span className="tour-title">{L.briefTitle} · {i + 1} {L.of} {BRIEFING.length}</span>
         <h2 id="brief-h">{BRIEFING[i][0]}</h2>
         <p>{BRIEFING[i][1]}</p>
         <div className="brief-dots" aria-hidden="true">
@@ -766,10 +772,10 @@ function Briefing({ onClose }: { onClose: () => void }) {
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button className="btn" onClick={onClose}>
-            Skip
+            {L.skip}
           </button>
           <button className="btn glow" onClick={() => (i < BRIEFING.length - 1 ? setI(i + 1) : onClose())}>
-            {i < BRIEFING.length - 1 ? "Next" : "Begin mission"}
+            {i < BRIEFING.length - 1 ? L.next : L.begin}
           </button>
         </div>
       </div>
@@ -1188,6 +1194,13 @@ export default function App() {
   const [pins, setPins] = useState<Pin[]>([]);
   const [copied, setCopied] = useState(false);
   const [briefCopied, setBriefCopied] = useState(false);
+  const [lang, setLang] = useState<Lang>("en");
+  const L = STR[lang];
+  const [cfg, setCfg] = useState({ arrayW: P.DEFAULT_POWER.arrayPeakW, loadW: P.DEFAULT_POWER.loadW, batteryWh: P.DEFAULT_POWER.batteryWh, slopeSafe: P.SLOPE_SAFE_DEG });
+  const slopeSafe = cfg.slopeSafe;
+  const [linkMsg, setLinkMsg] = useState("");
+  const [upMsg, setUpMsg] = useState("");
+  const [upBusy, setUpBusy] = useState(false);
   const [feed, setFeed] = useState<"checking" | "live" | "local">("checking");
   const [ephV, setEphV] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -1238,11 +1251,13 @@ export default function App() {
   const power = useMemo<P.PowerConfig>(
     () => ({
       ...P.DEFAULT_POWER,
+      arrayPeakW: cfg.arrayW,
+      batteryWh: cfg.batteryWh,
       tracking: crisis ? "vertical" : tracking,
       arrayHealth: crisis ? crisis.sc.health : 1,
-      loadW: crisis ? crisis.sc.load : P.DEFAULT_POWER.loadW,
+      loadW: crisis ? crisis.sc.load : cfg.loadW,
     }),
-    [tracking, crisis?.sc]
+    [tracking, crisis?.sc, cfg.arrayW, cfg.batteryWh, cfg.loadW]
   );
 
   const tNow = baseMs + delay * DAY;
@@ -1414,8 +1429,8 @@ export default function App() {
   const slopeHere = slope.max[cell.iy * P.GRID_N + cell.ix];
   const slopeMean = slope.mean[cell.iy * P.GRID_N + cell.ix];
   const roughHere = slope.rough[cell.iy * P.GRID_N + cell.ix];
-  const surface = !site.terrain ? "NO DATA" : slopeHere <= P.SLOPE_SAFE_DEG ? "FLAT · SAFE" : slopeHere <= P.SLOPE_LIMIT_DEG ? "SLOPED · CAUTION" : "STEEP · HAZARD";
-  const surfaceTone = !site.terrain ? "dim" : slopeHere <= P.SLOPE_SAFE_DEG ? "green" : slopeHere <= P.SLOPE_LIMIT_DEG ? "amber" : "crimson";
+  const surface = !site.terrain ? "NO DATA" : slopeHere <= slopeSafe ? "FLAT · SAFE" : slopeHere <= P.SLOPE_LIMIT_DEG ? "SLOPED · CAUTION" : "STEEP · HAZARD";
+  const surfaceTone = !site.terrain ? "dim" : slopeHere <= slopeSafe ? "green" : slopeHere <= P.SLOPE_LIMIT_DEG ? "amber" : "crimson";
   const scanStart = Math.floor(baseMs / DAY) * DAY;
   const scan = useMemo(() => P.scanYear(site, profile, scanStart), [site, profile, scanStart, ephV]);
   const ephNow = useMemo(() => P.ephemeris(tNow), [tNow, ephV]);
@@ -1435,7 +1450,7 @@ export default function App() {
     for (let i = 0; i < month.length; i++) {
       // Flat ground first: cells steeper than the safe limit are heavily penalised, hazards excluded.
       if (slope.max[i] > P.SLOPE_LIMIT_DEG) continue;
-      const sc = month[i] + w.earthPct[i] - Math.max(0, w.maxEclipseH[i] - 24) * 0.3 - Math.max(0, slope.max[i] - P.SLOPE_SAFE_DEG) * 12;
+      const sc = month[i] + w.earthPct[i] - Math.max(0, w.maxEclipseH[i] - 24) * 0.3 - Math.max(0, slope.max[i] - slopeSafe) * 12;
       if (sc > bs) {
         bs = sc;
         bi = i;
@@ -1457,6 +1472,87 @@ export default function App() {
     setNudges((n) => ({ ...n, [p.siteId]: p.cell }));
     setBaseUser(p.baseMs);
     setDelayRaw(p.delay);
+  };
+  const shareToken = () => {
+    const parts = ["v1", siteId, cell.ix, cell.iy, Math.round(baseMs / 60000), Math.round(delayRaw * 10), cfg.arrayW, cfg.loadW, cfg.batteryWh, Math.round(cfg.slopeSafe * 10)];
+    if (siteId === "custom") parts.push(enc(custom.lat * 1e4), enc(custom.lon * 1e4));
+    return parts.join("-");
+  };
+  const applyToken = (tok: string) => {
+    const p = tok.replace(/^#/, "").split("-");
+    if (p[0] !== "v1" || p.length < 10) return false;
+    const id = p[1];
+    if (id === "custom" && p.length >= 12) {
+      P.registerTerrain("custom", null);
+      const cs = P.customSite(dec(p[10]) / 1e4, dec(p[11]) / 1e4);
+      setCustom(cs);
+      setCLat(String(cs.lat));
+      setCLon(String(cs.lon));
+    } else if (!P.SITES.some((x) => x.id === id)) return false;
+    const n = p.slice(2, 10).map((x) => parseInt(x, 10));
+    if (n.some((x) => isNaN(x))) return false;
+    setSiteId(id);
+    setNudges((m) => ({ ...m, [id]: { ix: P.clamp(n[0], 0, 20), iy: P.clamp(n[1], 0, 20) } }));
+    setBaseUser(n[2] * 60000);
+    setDelayRaw(P.clamp(n[3] / 10, 0, 30));
+    setCfg({ arrayW: P.clamp(n[4], 10, 100000), loadW: P.clamp(n[5], 1, 100000), batteryWh: P.clamp(n[6], 10, 1e7), slopeSafe: P.clamp(n[7] / 10, 1, 15) });
+    setBeat(null);
+    setBriefing(false);
+    return true;
+  };
+  useEffect(() => {
+    const go = () => {
+      if (location.hash.length > 4) applyToken(location.hash);
+    };
+    go();
+    window.addEventListener("hashchange", go);
+    return () => window.removeEventListener("hashchange", go);
+  }, []);
+  const shareLink = () => {
+    const tok = shareToken();
+    try {
+      history.replaceState(null, "", "#" + tok);
+    } catch {
+      try {
+        location.hash = tok;
+      } catch {}
+    }
+    const done = (m: string) => {
+      setLinkMsg(m);
+      setTimeout(() => setLinkMsg(""), 2600);
+    };
+    if (canDownload) {
+      try {
+        navigator.clipboard.writeText(location.href).then(() => done("Link copied ✓"), () => done("Link is in the address bar"));
+      } catch {
+        done("Link is in the address bar");
+      }
+    } else done("Scenario saved to this page's link");
+  };
+  const loadLola = async (files: FileList | null) => {
+    if (!files || !files.length || crisis) return;
+    const la = parseFloat(cLat);
+    const lo = parseFloat(cLon);
+    const list = Array.from(files);
+    const fine = list.find((f) => f.size === P.LDEM20_BYTES);
+    const coarse = list.find((f) => f.size === P.LDEM240_BYTES) || null;
+    if (isNaN(la) || isNaN(lo)) return setUpMsg("Enter the latitude and longitude first.");
+    if (!fine) return setUpMsg("Select LDEM_80S_20M.IMG (1.85 GB). Add LDEM_75S_240M.IMG too for distant horizons.");
+    setUpBusy(true);
+    setUpMsg("Reading terrain…");
+    try {
+      const data = await P.buildTerrainFromLola(fine, coarse, la, lo, (f) => setUpMsg(`Ray-casting horizons… ${Math.round(f * 100)}%`));
+      P.registerTerrain("custom", data);
+      clearTimers();
+      setBeat(null);
+      setCustom({ ...P.customSite(la, lo), terrain: true, name: "Custom site · your LOLA terrain", short: "Custom LOLA site", note: "Terrain and horizon masks built in your browser from the LOLA files you supplied." });
+      setNudges((m) => ({ ...m, custom: { ix: 10, iy: 10 } }));
+      setSiteId("custom");
+      setUpMsg(coarse ? "Terrain loaded: 20 m near the lander, 240 m out to 300 km." : "Terrain loaded from the 20 m file only: horizons ignore terrain beyond about 2.5 km.");
+    } catch (err: any) {
+      setUpMsg(err && err.message ? err.message : "Could not read those files.");
+    }
+    setUpBusy(false);
   };
   const copyBrief = () => {
     const best = P.bestWindows(scan);
@@ -1632,6 +1728,14 @@ export default function App() {
             ▶ Lander Game
           </button>
         </div>
+        <label className="langsel">
+          <span className="sr">Language for explanations</span>
+          <select id="lang" value={lang} onChange={(e) => setLang(e.target.value as Lang)} aria-label="Language for explanations">
+            <option value="en">EN</option>
+            <option value="es">ES</option>
+            <option value="fr">FR</option>
+          </select>
+        </label>
         <div className="seg" role="group" aria-label="Audience mode" style={appMode === "game" ? { display: "none" } : undefined}>
           <button aria-pressed={mode === "engineer"} onClick={() => setMode("engineer")}>
             Flight Engineer
@@ -1788,6 +1892,7 @@ export default function App() {
               pulse={!!crisis}
               safe={safeMask}
               slope={slope}
+              slopeSafe={slopeSafe}
               sunAz={now.sunAz}
               sunLit={now.sunFrac > 0.02}
               onMove={moveTo}
@@ -1855,8 +1960,8 @@ export default function App() {
               )}
               {overlay === "slope" && (
                 <>
-                  <span><i style={{ background: GREEN }} />≤ {P.SLOPE_SAFE_DEG}° flat</span>
-                  <span><i style={{ background: C.amber }} />{P.SLOPE_SAFE_DEG}–{P.SLOPE_LIMIT_DEG}° caution</span>
+                  <span><i style={{ background: GREEN }} />≤ {slopeSafe}° flat</span>
+                  <span><i style={{ background: C.amber }} />{slopeSafe}–{P.SLOPE_LIMIT_DEG}° caution</span>
                   <span><i style={{ background: C.crimson }} />&gt; {P.SLOPE_LIMIT_DEG}° hazard</span>
                 </>
               )}
@@ -1875,8 +1980,7 @@ export default function App() {
             </div>
             {explorer && (
               <p className="callout">
-                This is real laser-altimeter terrain. Each square is 100 m. The Sun skims the horizon here, so a ridge only <b>20 m</b> tall casts a shadow
-                half a kilometre long. Moving one or two squares can trade weeks of darkness for weeks of light.
+                <Rich text={L.map} />
               </p>
             )}
           </Panel>
@@ -1919,6 +2023,8 @@ export default function App() {
                   if (isNaN(la) || isNaN(lo) || crisis) return;
                   clearTimers();
                   setBeat(null);
+                  P.registerTerrain("custom", null);
+                  setUpMsg("");
                   setCustom(P.customSite(la, lo));
                   setSiteId("custom");
                 }}
@@ -1934,6 +2040,11 @@ export default function App() {
                 <button className="btn small" type="submit" disabled={!!crisis}>
                   Evaluate
                 </button>
+                <label className="field upl">
+                  Add real terrain: your LOLA files (LDEM_80S_20M.IMG, optional LDEM_75S_240M.IMG)
+                  <input id="lola-files" type="file" multiple accept=".img,.IMG" disabled={upBusy || !!crisis} onChange={(e) => loadLola(e.target.files)} />
+                </label>
+                {upMsg && <span className="upmsg" role="status">{upMsg}</span>}
               </form>
             </div>
             {site.id === "athena" && (
@@ -1946,7 +2057,7 @@ export default function App() {
                 </button>
               </p>
             )}
-            {explorer && <p className="callout">{site.note} Bars compare every site at its current lander position.</p>}
+            {explorer && <p className="callout">{lang === "en" ? site.note + " " : ""}{L.sites}</p>}
           </Panel>
         </div>
 
@@ -2010,9 +2121,7 @@ export default function App() {
             </div>
             {explorer && (
               <p className="callout">
-                The Moon's axis is tilted only <b>1.54°</b> (Earth's is 23.4°), so at the pole the Sun never climbs. It
-                circles the horizon once every 29.5 days, and any hill along the way can eclipse it. There is no air to
-                bend or scatter light: behind a hill it is simply dark and about −200 °C.
+                <Rich text={L.pano} />
               </p>
             )}
           </Panel>
@@ -2107,9 +2216,7 @@ export default function App() {
             </div>
             {explorer && (
               <p className="callout">
-                Rockets slip. Drag the slider to delay the landing and watch the three stripes: a date that was sunny
-                with a clear radio link can turn dark and silent two weeks later, because the Sun has moved halfway
-                round the horizon and Earth has wobbled lower.
+                <Rich text={L.time} />
               </p>
             )}
           </Panel>
@@ -2127,6 +2234,9 @@ export default function App() {
             title="Scenario comparison"
             right={
               <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button className="btn small" onClick={shareLink}>
+                  {linkMsg || "Copy share link"}
+                </button>
                 <button className="btn small" onClick={copyBrief}>
                   {briefCopied ? "Copied ✓" : "Copy site brief"}
                 </button>
@@ -2195,10 +2305,7 @@ export default function App() {
             <EarthReticle profile={profile} timeline={timeline} now={now} />
             {explorer ? (
               <p className="callout">
-                The Moon is <b>tidally locked</b>: one face always points at Earth, so Earth never rises or sets. It
-                hovers in one patch of sky and traces a slow loop about once a month as the Moon's tilted, oval orbit
-                lets us see slightly around its edges (libration). Near the pole Earth sits right on the horizon, so
-                that small loop decides whether the radio link works at all.
+                <Rich text={L.reticle} />
               </p>
             ) : (
               <div className="legend">
@@ -2213,9 +2320,7 @@ export default function App() {
             <PolarView eph={ephNow} siteId={siteId} />
             {explorer ? (
               <p className="callout">
-                Looking straight down on the pole. The amber half is in daylight; it sweeps around once every 29.5 days.
-                Earth always sits toward the top, wobbling slightly. A site needs the Sun's side and Earth's side clear
-                of mountains at the same time.
+                <Rich text={L.polar} />
               </p>
             ) : (
               <div className="legend">
@@ -2226,23 +2331,28 @@ export default function App() {
           </Panel>
 
           {explorer ? (
-            <Panel title="What am I looking at?">
+            <Panel title={L.whatTitle}>
               <div className="explain">
                 <div>
-                  <h3>Why land at the south pole?</h3>
-                  <p>Craters there never see sunlight and trap water ice. Ridges next to them get sunlight most of the time. Missions want both within driving distance.</p>
+                  <h3>{L.why}</h3>
+                  <p>{L.whyT}</p>
                 </div>
                 <div>
-                  <h3>Right now at {site.short}</h3>
+                  <h3>{L.nowAt} {site.short}</h3>
                   <p>
-                    The Sun is <b>{Math.abs(now.sunEl).toFixed(1)}° {now.sunEl >= 0 ? "above" : "below"}</b> a flat horizon and the terrain in that direction rises to <b>{sgn(now.sunHorizon, 1)}°</b>, so the lander is{" "}
-                    <b>{sunState.toLowerCase()}</b>. Earth is <b>{now.earthClearance >= 0 ? "visible" : "hidden"}</b>,{" "}
-                    {Math.round(now.earthRangeKm).toLocaleString("en-US")} km away.
+                    <Rich
+                      text={L.nowT.replace("{el}", Math.abs(now.sunEl).toFixed(1))
+                        .replace("{dir}", now.sunEl >= 0 ? L.above : L.below)
+                        .replace("{hor}", sgn(now.sunHorizon, 1))
+                        .replace("{state}", now.sunFrac > 0.98 ? L.sunlit : now.sunFrac > 0.02 ? L.partial : L.eclipsed)
+                        .replace("{earth}", now.earthClearance >= 0 ? L.visible : L.hidden)
+                        .replace("{km}", Math.round(now.earthRangeKm).toLocaleString(lang))}
+                    />
                   </p>
                 </div>
                 <div>
-                  <h3>How this differs from Earth</h3>
-                  <p>One lunar day lasts 29.5 Earth days. A polar lander that loses the Sun may wait days for it to return, on battery alone, with no atmosphere to hold any warmth.</p>
+                  <h3>{L.differs}</h3>
+                  <p>{L.differsT}</p>
                 </div>
               </div>
             </Panel>
@@ -2279,6 +2389,39 @@ export default function App() {
             </Panel>
           )}
 
+          <Panel title="Lander configuration" tag="Your vehicle">
+            <div className="cfg">
+              {([
+                ["arrayW", "Solar array (W)", 10, 100000, 10],
+                ["loadW", "Power load (W)", 1, 100000, 5],
+                ["batteryWh", "Battery (Wh)", 10, 10000000, 100],
+                ["slopeSafe", "Max safe slope (°)", 1, 15, 0.5],
+              ] as [keyof typeof cfg, string, number, number, number][]).map(([k, label, lo, hi, st2]) => (
+                <label className="field" key={k}>
+                  {label}
+                  <input
+                    id={"cfg-" + k}
+                    type="number"
+                    min={lo}
+                    max={hi}
+                    step={st2}
+                    value={cfg[k]}
+                    disabled={!!crisis}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (!isNaN(v)) setCfg((c) => ({ ...c, [k]: P.clamp(v, lo, hi) }));
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+            <div className="legend">
+              <span>Power, battery and slope results across the planner update to match.</span>
+              <button className="lnk" onClick={() => setCfg({ arrayW: P.DEFAULT_POWER.arrayPeakW, loadW: P.DEFAULT_POWER.loadW, batteryWh: P.DEFAULT_POWER.batteryWh, slopeSafe: P.SLOPE_SAFE_DEG })}>
+                Reset to defaults
+              </button>
+            </div>
+          </Panel>
         </div>
       </main>
 
@@ -2300,7 +2443,7 @@ export default function App() {
         </div>
       </div>
 
-      {briefing && <Briefing onClose={() => setBriefing(false)} />}
+      {briefing && <Briefing lang={lang} onClose={() => setBriefing(false)} />}
       {showProv && <Provenance onClose={() => setShowProv(false)} />}
     </div>
   );

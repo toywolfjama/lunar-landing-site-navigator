@@ -312,6 +312,12 @@ function decodeInt16(b64: string): Int16Array {
   return new Int16Array(u8.buffer);
 }
 
+export interface TerrainData {
+  grid: number[]; // 441 heights, m
+  patch: Int16Array; // 106 x 106, 0.5 m units
+  horizon: Int16Array; // 441 x 360, 0.01 deg
+}
+const runtimeTerrain = new Map<string, TerrainData>();
 const matrixCache = new Map<string, number[][]>();
 const patchCache = new Map<string, Int16Array>();
 const horizonCache = new Map<string, Int16Array>();
@@ -322,19 +328,19 @@ export function buildElevationMatrix(site: Site): number[][] {
   const hit = matrixCache.get(site.id);
   if (hit) return hit;
   const Z: number[][] = [];
-  const src = site.terrain ? LOLA[site.id].grid : null;
+  const src = site.terrain ? (runtimeTerrain.get(site.id)?.grid ?? LOLA[site.id].grid) : null;
   for (let iy = 0; iy < GRID_N; iy++) {
     const row: number[] = [];
     for (let ix = 0; ix < GRID_N; ix++) row.push(src ? src[iy * GRID_N + ix] : 0);
     Z.push(row);
   }
-  if (site.id !== "custom") matrixCache.set(site.id, Z);
+  matrixCache.set(site.id, Z);
   return Z;
 }
 
 /** Height of the grid centre above the reference sphere, metres. */
 export function siteDatumM(site: Site): number {
-  return site.terrain ? LOLA[site.id].grid[220] : 0;
+  return site.terrain ? (runtimeTerrain.get(site.id)?.grid ?? LOLA[site.id].grid)[220] : 0;
 }
 
 /** 20 m LOLA height (m) at x east, y north of the grid centre. Used for the map image. */
@@ -342,7 +348,7 @@ export function patchElevationAt(site: Site, x: number, y: number): number {
   if (!site.terrain) return 0;
   let p = patchCache.get(site.id);
   if (!p) {
-    p = decodeInt16(LOLA[site.id].patch);
+    p = runtimeTerrain.get(site.id)?.patch ?? decodeInt16(LOLA[site.id].patch);
     patchCache.set(site.id, p);
   }
   const gx = clamp((x + PATCH_HALF_M) / PATCH_STEP_M, 0, PATCH_N - 1.001);
@@ -365,7 +371,7 @@ export function horizonProfile(site: Site, ix: number, iy: number): Float32Array
   if (hit) return hit;
   let all = horizonCache.get(site.id);
   if (!all) {
-    all = decodeInt16(LOLA[site.id].horizon);
+    all = runtimeTerrain.get(site.id)?.horizon ?? decodeInt16(LOLA[site.id].horizon);
     horizonCache.set(site.id, all);
   }
   const prof = new Float32Array(N_AZ);
@@ -791,4 +797,138 @@ export function surveySlope(site: Site) {
   }
   slopeCache.set(site.id, out);
   return out;
+}
+
+/** Drop every cached product for a site id (used when custom terrain is loaded or removed). */
+export function clearSiteCaches(id: string): void {
+  matrixCache.delete(id);
+  patchCache.delete(id);
+  horizonCache.delete(id);
+  slopeCache.delete(id);
+  for (const k of Array.from(profileCache.keys())) if (k.startsWith(id + ":")) profileCache.delete(k);
+}
+
+export function registerTerrain(id: string, data: TerrainData | null): void {
+  clearSiteCaches(id);
+  if (data) runtimeTerrain.set(id, data);
+  else runtimeTerrain.delete(id);
+}
+
+/* ------------------------------------------------------------------ */
+/* Build terrain for any polar site from the user's own LOLA files     */
+/* ------------------------------------------------------------------ */
+
+const LDEM20_N = 30400; // LDEM_80S_20M.IMG: 30400 x 30400 int16, 20 m, polar stereographic
+const LDEM240_N = 3812; // LDEM_75S_240M.IMG: 3812 x 3812 int16, 240 m
+export const LDEM20_BYTES = LDEM20_N * LDEM20_N * 2;
+export const LDEM240_BYTES = LDEM240_N * LDEM240_N * 2;
+
+/**
+ * Same extraction as the built-in sites: 21 x 21 grid, 20 m patch and a 360-azimuth horizon mask for all 441
+ * cells, ray-cast over the curved Moon. `fine` is LDEM_80S_20M.IMG (required); `coarse` is LDEM_75S_240M.IMG
+ * (optional: without it the horizon only sees terrain within about 2.5 km).
+ */
+export async function buildTerrainFromLola(
+  fine: Blob,
+  coarse: Blob | null,
+  lat: number,
+  lon: number,
+  onProgress: (fraction: number) => void
+): Promise<TerrainData> {
+  if (fine.size !== LDEM20_BYTES) throw new Error("The 20 m file must be LDEM_80S_20M.IMG (1,848,320,000 bytes).");
+  if (coarse && coarse.size !== LDEM240_BYTES) throw new Error("The 240 m file must be LDEM_75S_240M.IMG (29,062,688 bytes).");
+  if (lat > -80.3) throw new Error("The site must be south of 80.3°S to sit inside LDEM_80S_20M.");
+  const R = 1737400;
+  const b240 = coarse ? new Int16Array(await coarse.arrayBuffer()) : null;
+  const la = lat * DEG;
+  const lo = lon * DEG;
+  const u = [Math.cos(la) * Math.cos(lo), Math.cos(la) * Math.sin(lo), Math.sin(la)];
+  const e = [-Math.sin(lo), Math.cos(lo), 0];
+  const n = [-Math.sin(la) * Math.cos(lo), -Math.sin(la) * Math.sin(lo), Math.cos(la)];
+  const sc0 = (2 * R) / (1 - u[2]);
+  const ci = (sc0 * u[1]) / 20 + 15199.5;
+  const cj = 15199.5 - (sc0 * u[0]) / 20;
+  const HW = 130;
+  const W = 2 * HW + 1;
+  const i0 = Math.round(ci) - HW;
+  const j0 = Math.round(cj) - HW;
+  if (i0 < 0 || j0 < 0 || i0 + W > LDEM20_N || j0 + W > LDEM20_N) throw new Error("The site is too close to the edge of the 20 m map.");
+  const rowBytes = LDEM20_N * 2;
+  const rows = new Int16Array(await fine.slice(j0 * rowBytes, (j0 + W) * rowBytes).arrayBuffer());
+  const hi = new Int16Array(W * W);
+  for (let r = 0; r < W; r++) for (let c = 0; c < W; c++) hi[r * W + c] = rows[r * LDEM20_N + i0 + c];
+
+  const height = (ux: number, uy: number, uz: number): number => {
+    const sc = (2 * R) / (1 - uz);
+    const x = sc * uy;
+    const y = sc * ux;
+    let fi = x / 20 + 15199.5 - i0;
+    let fj = 15199.5 - y / 20 - j0;
+    if (fi >= 0 && fj >= 0 && fi < W - 1 && fj < W - 1) {
+      const a = fi | 0, b = fj | 0, p = fi - a, q = fj - b, k = b * W + a;
+      return 0.5 * ((hi[k] * (1 - p) + hi[k + 1] * p) * (1 - q) + (hi[k + W] * (1 - p) + hi[k + W + 1] * p) * q);
+    }
+    if (!b240) return NaN;
+    fi = x / 240 + 1905.5;
+    fj = 1905.5 - y / 240;
+    if (!(fi >= 0 && fj >= 0 && fi < LDEM240_N - 1 && fj < LDEM240_N - 1)) return NaN;
+    const a = fi | 0, b = fj | 0, p = fi - a, q = fj - b, k = b * LDEM240_N + a;
+    return 0.5 * ((b240[k] * (1 - p) + b240[k + 1] * p) * (1 - q) + (b240[k + LDEM240_N] * (1 - p) + b240[k + LDEM240_N + 1] * p) * q);
+  };
+  const at = (E: number, Nn: number) => {
+    const v = [u[0] + (E * e[0] + Nn * n[0]) / R, u[1] + (E * e[1] + Nn * n[1]) / R, u[2] + (E * e[2] + Nn * n[2]) / R];
+    const l = Math.hypot(v[0], v[1], v[2]);
+    return [v[0] / l, v[1] / l, v[2] / l];
+  };
+  const steps: number[] = [];
+  for (let s = 0; s < 300000; ) {
+    s += s < 1500 ? 20 : s < 6000 ? 60 : s < 40000 ? 120 : 400;
+    steps.push(s);
+  }
+  const cs = steps.map((s) => Math.cos(s / R));
+  const sn = steps.map((s) => Math.sin(s / R));
+
+  const grid: number[] = [];
+  for (let iy = 0; iy < GRID_N; iy++)
+    for (let ix = 0; ix < GRID_N; ix++) {
+      const p = at((ix - 10) * 100, (iy - 10) * 100);
+      grid.push(Math.round(height(p[0], p[1], p[2]) * 10) / 10);
+    }
+  const patch = new Int16Array(PATCH_N * PATCH_N);
+  for (let r = 0; r < PATCH_N; r++)
+    for (let c = 0; c < PATCH_N; c++) {
+      const p = at(-PATCH_HALF_M + c * PATCH_STEP_M, -PATCH_HALF_M + r * PATCH_STEP_M);
+      patch[r * PATCH_N + c] = Math.round(height(p[0], p[1], p[2]) * 2);
+    }
+  const horizon = new Int16Array(GRID_N * GRID_N * N_AZ);
+  for (let iy = 0; iy < GRID_N; iy++) {
+    onProgress(iy / GRID_N);
+    await new Promise((r) => setTimeout(r, 0));
+    for (let ix = 0; ix < GRID_N; ix++) {
+      const u0 = at((ix - 10) * 100, (iy - 10) * 100);
+      const r0 = R + height(u0[0], u0[1], u0[2]) + MAST_HEIGHT_M;
+      for (let k = 0; k < N_AZ; k++) {
+        const ca = Math.cos(k * DEG);
+        const sa = Math.sin(k * DEG);
+        let d = [ca * n[0] + sa * e[0], ca * n[1] + sa * e[1], ca * n[2] + sa * e[2]];
+        const dp = d[0] * u0[0] + d[1] * u0[1] + d[2] * u0[2];
+        d = [d[0] - dp * u0[0], d[1] - dp * u0[1], d[2] - dp * u0[2]];
+        const dl = Math.hypot(d[0], d[1], d[2]);
+        d = [d[0] / dl, d[1] / dl, d[2] / dl];
+        let mx = -1e9;
+        for (let i = 0; i < steps.length; i++) {
+          const c = cs[i];
+          const s = sn[i];
+          const h = height(u0[0] * c + d[0] * s, u0[1] * c + d[1] * s, u0[2] * c + d[2] * s);
+          if (h !== h) break;
+          const rp = R + h;
+          const t = (rp * c - r0) / (rp * s);
+          if (t > mx) mx = t;
+        }
+        horizon[(iy * GRID_N + ix) * N_AZ + k] = Math.round((Math.atan(mx) / DEG) * 100);
+      }
+    }
+  }
+  onProgress(1);
+  return { grid, patch, horizon };
 }
