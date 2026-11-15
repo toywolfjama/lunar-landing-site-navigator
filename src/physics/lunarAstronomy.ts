@@ -738,3 +738,55 @@ export function timelineCsv(site: Site, tl: Timeline): string {
     ].join(","));
   return "# " + site.name + " lat " + site.lat + " lon " + site.lon + "\n" + rows.join("\n") + "\n";
 }
+
+export const SLOPE_SAFE_DEG = 8;
+export const SLOPE_LIMIT_DEG = 15;
+const slopeCache = new Map<string, { mean: Float32Array; max: Float32Array; rough: Float32Array }>();
+
+/**
+ * Surface slope per 100 m cell from the 20 m LOLA patch: mean and steepest of the 25 facets (20 m baseline)
+ * inside the cell, plus roughness (RMS height about the cell's best-fit plane, metres).
+ */
+export function surveySlope(site: Site) {
+  const hit = slopeCache.get(site.id);
+  if (hit) return hit;
+  const n = GRID_N * GRID_N;
+  const out = { mean: new Float32Array(n), max: new Float32Array(n), rough: new Float32Array(n) };
+  if (site.terrain) {
+    const z = (i: number, j: number) => patchElevationAt(site, -PATCH_HALF_M + i * PATCH_STEP_M, -PATCH_HALF_M + j * PATCH_STEP_M);
+    for (let iy = 0; iy < GRID_N; iy++)
+      for (let ix = 0; ix < GRID_N; ix++) {
+        let sum = 0;
+        let mx = 0;
+        let sgx = 0;
+        let sgy = 0;
+        for (let j = iy * 5; j < iy * 5 + 5; j++)
+          for (let i = ix * 5; i < ix * 5 + 5; i++) {
+            const gx = (z(i + 1, j) + z(i + 1, j + 1) - z(i, j) - z(i, j + 1)) / (2 * PATCH_STEP_M);
+            const gy = (z(i, j + 1) + z(i + 1, j + 1) - z(i, j) - z(i + 1, j)) / (2 * PATCH_STEP_M);
+            const sl = Math.atan(Math.hypot(gx, gy)) / DEG;
+            sum += sl;
+            sgx += gx;
+            sgy += gy;
+            if (sl > mx) mx = sl;
+          }
+        const mgx = sgx / 25;
+        const mgy = sgy / 25;
+        let zm = 0;
+        for (let j = iy * 5; j <= iy * 5 + 5; j++) for (let i = ix * 5; i <= ix * 5 + 5; i++) zm += z(i, j);
+        zm /= 36;
+        let ss = 0;
+        for (let j = iy * 5; j <= iy * 5 + 5; j++)
+          for (let i = ix * 5; i <= ix * 5 + 5; i++) {
+            const d = z(i, j) - zm - mgx * (i - ix * 5 - 2.5) * PATCH_STEP_M - mgy * (j - iy * 5 - 2.5) * PATCH_STEP_M;
+            ss += d * d;
+          }
+        const k = iy * GRID_N + ix;
+        out.mean[k] = sum / 25;
+        out.max[k] = mx;
+        out.rough[k] = Math.sqrt(ss / 36);
+      }
+  }
+  slopeCache.set(site.id, out);
+  return out;
+}

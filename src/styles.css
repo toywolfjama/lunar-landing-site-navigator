@@ -288,3 +288,16 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius
 .lnk { background: none; border: 0; padding: 0; color: var(--text); text-align: left; text-decoration: underline; text-decoration-color: var(--line-2); text-underline-offset: 3px; }
 .lnk:hover { color: var(--cyan); }
 @media (prefers-reduced-motion: reduce) { .panel, .tile, .tour, .top, .pill, .brand-mark { animation: none; } }
+
+/* ---- v5: landing surface, calmer chrome ---- */
+.green { color: #22c55e; }
+.surface { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; border: 1px solid var(--line-2); border-left: 3px solid currentColor; border-radius: 6px; padding: 7px 10px; font-size: 12px; }
+.surface .k { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; color: var(--faint); }
+.surface b { font-family: var(--mono); letter-spacing: 0.06em; }
+.surface .mono { color: var(--dim); font-size: 11px; }
+.brand h1 { background: none; color: var(--text); -webkit-text-fill-color: currentColor; letter-spacing: 0.12em; }
+.brand-mark { animation: none; }
+.btn:hover:not(:disabled), .beat:hover, .dpad button:hover, .site:hover:not(:disabled), .btn.glow { box-shadow: 0 0 0 1px rgba(6, 182, 212, 0.35), 0 0 10px rgba(6, 182, 212, 0.18); border-color: rgba(6, 182, 212, 0.6); }
+.tile.s-amber, .tile.s-cyan, .tile.s-crimson { box-shadow: 0 12px 30px -18px rgba(0, 0, 0, 0.8); }
+.panel-head h2 { color: #a8b3c7; }
+.tag { border-radius: 4px; }

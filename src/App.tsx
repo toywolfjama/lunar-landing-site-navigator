@@ -45,7 +45,8 @@ const reducedMotion = () =>
   typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 type Mode = "engineer" | "explorer";
-type Overlay = "sun" | "earth" | "month";
+type Overlay = "sun" | "earth" | "month" | "slope" | "none";
+const GREEN = "#22C55E";
 type Cell = { ix: number; iy: number };
 
 /* ------------------------------------------------------------------ */
@@ -167,9 +168,10 @@ function TerrainCanvas({ site, sunAz, lit }: { site: P.Site; sunAz: number; lit:
         const shade = P.clamp((-gx * lx - gy * ly + lz) / Math.hypot(gx, gy, 1) / lz, 0, 1.9);
         const t = site.terrain ? (z[i] - lo) / (hi - lo || 1) : 0.25;
         const b = (0.16 + 0.62 * shade) * warm;
-        let r = (60 + 150 * t) * b * 1.06;
-        let g = (62 + 140 * t) * b;
-        let bl = (74 + 126 * t) * b * (lit ? 0.9 : 1.15);
+        // Neutral regolith grey, like an orbital photograph.
+        let r = (78 + 132 * t) * b;
+        let g = (77 + 130 * t) * b;
+        let bl = (76 + 128 * t) * b * (lit ? 1 : 1.08);
         const c10 = Math.floor(z[i] / 10);
         if (c10 !== Math.floor(zr / 10) || c10 !== Math.floor(zd / 10)) {
           const major = Math.floor(z[i] / 50) !== Math.floor(zr / 50) || Math.floor(z[i] / 50) !== Math.floor(zd / 50);
@@ -198,6 +200,7 @@ function NudgeMap(props: {
   pulse?: boolean;
   sunAz: number;
   sunLit: boolean;
+  slope: { mean: Float32Array; max: Float32Array; rough: Float32Array };
   onMove: (c: Cell) => void;
 }) {
   const { cell, grid, month, overlay, haven } = props;
@@ -217,6 +220,12 @@ function NudgeMap(props: {
         } else if (overlay === "earth") {
           fill = grid[i].lock === "LOCK" ? C.cyan : grid[i].lock === "GRAZING" ? C.blue : C.crimson;
           op = 0.3;
+        } else if (overlay === "slope") {
+          const sl = props.slope.max[i];
+          fill = sl <= P.SLOPE_SAFE_DEG ? GREEN : sl <= P.SLOPE_LIMIT_DEG ? C.amber : C.crimson;
+          op = 0.42;
+        } else if (overlay === "none") {
+          op = 0;
         } else {
           const p = month[i] / 100;
           fill = `rgb(${Math.round(4 + 241 * p)},${Math.round(6 + 152 * p)},${Math.round(14 - 3 * p)})`;
@@ -225,7 +234,7 @@ function NudgeMap(props: {
         out.push(<rect key={i} x={ix} y={20 - iy} width={1.02} height={1.02} fill={fill} fillOpacity={op} />);
       }
     return out;
-  }, [grid, month, overlay]);
+  }, [grid, month, overlay, props.slope]);
 
   const cx = cell.ix + 0.5;
   const cy = 20 - cell.iy + 0.5;
@@ -358,6 +367,18 @@ function Panorama({ profile, timeline, now }: { profile: Float32Array; timeline:
   return (
     <svg className="chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="360 degree horizon panorama with the path of the Sun and the position of Earth">
       <defs>
+        <radialGradient id="sunCore">
+          <stop offset="0" stopColor="#FFFFFF" />
+          <stop offset="0.55" stopColor="#FFFBEA" />
+          <stop offset="0.85" stopColor="#FDE68A" />
+          <stop offset="1" stopColor="#FBBF24" />
+        </radialGradient>
+        <radialGradient id="sunHalo">
+          <stop offset="0" stopColor="#FFF4C2" stopOpacity="0.75" />
+          <stop offset="0.25" stopColor="#FCD34D" stopOpacity="0.32" />
+          <stop offset="0.6" stopColor="#F59E0B" stopOpacity="0.1" />
+          <stop offset="1" stopColor="#F59E0B" stopOpacity="0" />
+        </radialGradient>
         <linearGradient id="ter" x1="0" x2="0" y1="0" y2="1">
           <stop offset="0" stopColor="#273449" />
           <stop offset="1" stopColor="#0b1120" />
@@ -379,11 +400,12 @@ function Panorama({ profile, timeline, now }: { profile: Float32Array; timeline:
         <path d={g.earth} fill="none" stroke={C.cyan} strokeOpacity={0.7} strokeWidth={1} />
         <circle cx={g.X(now.earthAz)} cy={g.Y(now.earthEl)} r={earthR} fill={C.blue} stroke={C.cyan} strokeWidth={1.5} />
         {sunLit && (
-          <circle cx={g.X(now.sunAz)} cy={g.Y(now.sunEl)} r={sunR + 5} fill={C.amber} fillOpacity={0.3}>
-            {!reducedMotion() && <animate attributeName="r" values={`${sunR + 4};${sunR + 11};${sunR + 4}`} dur="2.6s" repeatCount="indefinite" />}
+          <circle cx={g.X(now.sunAz)} cy={g.Y(now.sunEl)} r={sunR * 7} fill="url(#sunHalo)">
+            {!reducedMotion() && <animate attributeName="r" values={`${sunR * 6.4};${sunR * 7.6};${sunR * 6.4}`} dur="4s" repeatCount="indefinite" />}
           </circle>
         )}
-        {sunLit && <circle cx={g.X(now.sunAz)} cy={g.Y(now.sunEl)} r={sunR} fill={C.gold} />}
+        {sunLit && <circle cx={g.X(now.sunAz)} cy={g.Y(now.sunEl)} r={sunR * 2.4} fill="url(#sunHalo)" />}
+        {sunLit && <circle cx={g.X(now.sunAz)} cy={g.Y(now.sunEl)} r={sunR} fill="url(#sunCore)" />}
         <path d={g.terrain} fill="url(#ter)" stroke="#8494ad" strokeWidth={1.2} strokeLinejoin="round" />
         <path d={g.sunHidden} fill="none" stroke={C.faint} strokeWidth={1} strokeDasharray="2 4" />
         {!sunLit && (
@@ -922,6 +944,16 @@ function PolarView({ eph, siteId }: { eph: P.Ephemeris; siteId: string }) {
         <clipPath id="cap">
           <circle cx={c} cy={c} r={R} />
         </clipPath>
+        <radialGradient id="pvCore">
+          <stop offset="0" stopColor="#FFFFFF" />
+          <stop offset="0.6" stopColor="#FFFBEA" />
+          <stop offset="1" stopColor="#FBBF24" />
+        </radialGradient>
+        <radialGradient id="pvHalo">
+          <stop offset="0" stopColor="#FFF4C2" stopOpacity="0.7" />
+          <stop offset="0.4" stopColor="#FCD34D" stopOpacity="0.22" />
+          <stop offset="1" stopColor="#F59E0B" stopOpacity="0" />
+        </radialGradient>
         <radialGradient id="capg">
           <stop offset="0" stopColor="#1e293b" />
           <stop offset="1" stopColor="#0b1120" />
@@ -936,9 +968,8 @@ function PolarView({ eph, siteId }: { eph: P.Ephemeris; siteId: string }) {
       <text x={c + 4} y={c - R / 2 - 3} fontSize={9}>85°S</text>
       <text x={c + 4} y={c - R - 3} fontSize={9}>80°S</text>
       <line x1={c} y1={c} x2={sun[0]} y2={sun[1]} stroke={C.gold} strokeOpacity={0.5} strokeDasharray="3 4" />
-      <circle cx={sun[0]} cy={sun[1]} r={7} fill={C.gold}>
-        {!reducedMotion() && <animate attributeName="r" values="6;8.5;6" dur="2.6s" repeatCount="indefinite" />}
-      </circle>
+<circle cx={sun[0]} cy={sun[1]} r={20} fill="url(#pvHalo)" />
+      <circle cx={sun[0]} cy={sun[1]} r={6.5} fill="url(#pvCore)" />
       <text x={sun[0]} y={sun[1] + (sun[1] > c ? 19 : -12)} textAnchor="middle" style={{ fill: C.gold }}>SUN</text>
       <line x1={c} y1={c} x2={earth[0]} y2={earth[1]} stroke={C.cyan} strokeOpacity={0.5} strokeDasharray="3 4" />
       <circle cx={earth[0]} cy={earth[1]} r={6} fill={C.blue} stroke={C.cyan} />
@@ -1037,6 +1068,7 @@ interface Pin {
   baseMs: number;
   delay: number;
   stats: P.TimelineStats;
+  slope: number;
 }
 
 const BEATS = ["The Eternal Peak Myth", "The 100 m Cliff Edge", "Rocket Delay Cascade", "Crisis Triage Challenge"];
@@ -1286,6 +1318,12 @@ export default function App() {
   const lockLabel = now.lock === "LOCK" ? "NOMINAL LOCK" : now.lock === "GRAZING" ? "GRAZING LOCK" : "RIDGE OCCULTATION BLACKOUT";
   const lockTone = now.lock === "LOCK" ? "cyan" : now.lock === "GRAZING" ? "blue" : "crimson";
   const st = timeline.stats;
+  const slope = useMemo(() => P.surveySlope(site), [site]);
+  const slopeHere = slope.max[cell.iy * P.GRID_N + cell.ix];
+  const slopeMean = slope.mean[cell.iy * P.GRID_N + cell.ix];
+  const roughHere = slope.rough[cell.iy * P.GRID_N + cell.ix];
+  const surface = !site.terrain ? "NO DATA" : slopeHere <= P.SLOPE_SAFE_DEG ? "FLAT · SAFE" : slopeHere <= P.SLOPE_LIMIT_DEG ? "SLOPED · CAUTION" : "STEEP · HAZARD";
+  const surfaceTone = !site.terrain ? "dim" : slopeHere <= P.SLOPE_SAFE_DEG ? "green" : slopeHere <= P.SLOPE_LIMIT_DEG ? "amber" : "crimson";
   const scanStart = Math.floor(baseMs / DAY) * DAY;
   const scan = useMemo(() => P.scanYear(site, profile, scanStart), [site, profile, scanStart, ephV]);
   const ephNow = useMemo(() => P.ephemeris(tNow), [tNow, ephV]);
@@ -1303,7 +1341,9 @@ export default function App() {
     let bi = 0;
     let bs = -1;
     for (let i = 0; i < month.length; i++) {
-      const sc = month[i] + w.earthPct[i] - Math.max(0, w.maxEclipseH[i] - 24) * 0.3;
+      // Flat ground first: cells steeper than the safe limit are heavily penalised, hazards excluded.
+      if (slope.max[i] > P.SLOPE_LIMIT_DEG) continue;
+      const sc = month[i] + w.earthPct[i] - Math.max(0, w.maxEclipseH[i] - 24) * 0.3 - Math.max(0, slope.max[i] - P.SLOPE_SAFE_DEG) * 12;
       if (sc > bs) {
         bs = sc;
         bi = i;
@@ -1314,7 +1354,7 @@ export default function App() {
   const pinNow = () =>
     setPins((p) => [
       ...p.slice(-4),
-      { id: Date.now(), label: `${site.short} · ${sgn(dE, 0)} E ${sgn(dN, 0)} N · ${fmtDay(baseMs + delayRaw * DAY)}`, siteId, cell, baseMs, delay: delayRaw, stats: st },
+      { id: Date.now(), label: `${site.short} · ${sgn(dE, 0)} E ${sgn(dN, 0)} N · ${fmtDay(baseMs + delayRaw * DAY)}`, siteId, cell, baseMs, delay: delayRaw, stats: st, slope: slopeHere },
     ]);
   const restore = (p: Pin) => {
     if (crisis) return;
@@ -1499,6 +1539,7 @@ export default function App() {
               overlay={overlay}
               haven={haven}
               pulse={!!crisis}
+              slope={slope}
               sunAz={now.sunAz}
               sunLit={now.sunFrac > 0.02}
               onMove={moveTo}
@@ -1522,6 +1563,8 @@ export default function App() {
                 <dd>{sgn(dN, 0)} m</dd>
                 <dt>Elevation</dt>
                 <dd>{sgn(Z[cell.iy][cell.ix], 0)} m</dd>
+                <dt>Slope (max)</dt>
+                <dd className={surfaceTone}>{site.terrain ? slopeHere.toFixed(1) + "°" : "n/a"}</dd>
                 <dt>30-d Sun</dt>
                 <dd>{monthHere.toFixed(0)}%</dd>
               </dl>
@@ -1534,8 +1577,19 @@ export default function App() {
                   <option value="sun">Sunlight now</option>
                   <option value="earth">Earth link now</option>
                   <option value="month">30-day sunlight %</option>
+                  <option value="slope">Slope hazard</option>
+                  <option value="none">Terrain only</option>
                 </select>
               </label>
+            </div>
+            <div className={"surface " + surfaceTone}>
+              <span className="k">Landing surface</span>
+              <b>{surface}</b>
+              {site.terrain && (
+                <span className="mono">
+                  max {slopeHere.toFixed(1)}° · mean {slopeMean.toFixed(1)}° · roughness {roughHere.toFixed(1)} m
+                </span>
+              )}
             </div>
             <div className="legend">
               {overlay === "sun" && (
@@ -1549,6 +1603,13 @@ export default function App() {
                   <span><i style={{ background: C.cyan }} />Nominal lock</span>
                   <span><i style={{ background: C.blue }} />Grazing</span>
                   <span><i style={{ background: C.crimson }} />Blackout</span>
+                </>
+              )}
+              {overlay === "slope" && (
+                <>
+                  <span><i style={{ background: GREEN }} />≤ {P.SLOPE_SAFE_DEG}° flat</span>
+                  <span><i style={{ background: C.amber }} />{P.SLOPE_SAFE_DEG}–{P.SLOPE_LIMIT_DEG}° caution</span>
+                  <span><i style={{ background: C.crimson }} />&gt; {P.SLOPE_LIMIT_DEG}° hazard</span>
                 </>
               )}
               {overlay === "month" && (
@@ -1822,6 +1883,7 @@ export default function App() {
                     <th>Earth link</th>
                     <th>Longest blackout</th>
                     <th>Battery low</th>
+                    <th>Slope</th>
                     <th />
                   </tr>
                 </thead>
@@ -1833,6 +1895,7 @@ export default function App() {
                     <td>{st.commsPct.toFixed(0)}%</td>
                     <td>{fmtDur(st.longestBlackoutH)}</td>
                     <td>{(st.minSoc * 100).toFixed(0)}%</td>
+                    <td>{site.terrain ? slopeHere.toFixed(1) + "°" : "n/a"}</td>
                     <td />
                   </tr>
                   {pins.map((p) => (
@@ -1845,6 +1908,7 @@ export default function App() {
                       <td className={p.stats.commsPct > st.commsPct ? "ok" : ""}>{p.stats.commsPct.toFixed(0)}%</td>
                       <td className={p.stats.longestBlackoutH < st.longestBlackoutH ? "ok" : ""}>{fmtDur(p.stats.longestBlackoutH)}</td>
                       <td className={p.stats.minSoc > st.minSoc ? "ok" : ""}>{(p.stats.minSoc * 100).toFixed(0)}%</td>
+                      <td className={p.slope < slopeHere ? "ok" : ""}>{p.slope.toFixed(1)}°</td>
                       <td>
                         <button className="lnk" aria-label="Remove pinned scenario" onClick={() => setPins((x) => x.filter((q) => q.id !== p.id))}>✕</button>
                       </td>

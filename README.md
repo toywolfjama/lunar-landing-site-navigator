@@ -16,6 +16,8 @@ is the Sun above the local horizon (power), and is Earth above it (direct-to-Ear
 - Landing window finder: scans the next 12 months for the best 14-day landing dates at the chosen position.
 - Scenario comparison: pin site/position/date combinations and compare them side by side.
 - One-click best-cell search, CSV export of the 30-day timeline, and a top-down polar view of sunlight and Earth direction.
+- Landing-surface check: slope and roughness of every 100 m cell from the 20 m LOLA data, with a hazard overlay
+  (flat up to 8 deg, caution to 15 deg, hazard above).
 - Flight Engineer mode (raw telemetry) and Explorer mode (plain-English explanations).
 - Tries a live JPL Horizons feed for the chosen date and falls back to the built-in engine if the call is blocked.
 - Three survival gauges (battery, comms link, solar efficiency), a guided tour and a 15-second "crisis triage" game
@@ -53,6 +55,8 @@ node build.mjs
 
 ## Known limits
 
+- Slope is measured over 20 m baselines; rocks and craters smaller than that are invisible. The 8 and 15 deg limits are
+  illustrative, not any specific lander's tolerance.
 - Horizon masks are sampled at 1 deg of azimuth with 20 m terrain near the lander; boulder-scale relief is absent.
 - Physical libration, nutation and ground-station position on Earth are not modelled.
 - Lander power and radio figures (480 W array, 140 W load, 3.6 kWh battery, S-band link) are illustrative assumptions.
