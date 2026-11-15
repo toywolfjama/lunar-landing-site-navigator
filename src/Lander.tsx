@@ -146,7 +146,7 @@ export function LanderGame(props: {
 
     const frame = (ms: number) => {
       raf = requestAnimationFrame(frame);
-      const dt = Math.min(0.04, (ms - last) / 1000);
+      const dt = Math.min(0.1, (ms - last) / 1000); // keeps real-time pace on slow devices
       last = ms;
       const s = sim.current;
       const k = keys.current;
