@@ -985,15 +985,15 @@ export function Mission() {
         )}
 
         <label className="fld">
-          <span>Touchdown time (UTC)</span>
+          <span>Touchdown time (your time)</span>
           <div className="row">
             <input
               type="datetime-local"
-              value={new Date(t).toISOString().slice(0, 16)}
+              value={new Date(t - new Date(t).getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
               min="2020-01-01T00:00"
               max="2045-12-31T23:59"
               onChange={(e) => {
-                const v = Date.parse(e.target.value + ":00Z");
+                const v = new Date(e.target.value).getTime(); // the field is in the viewer's local time
                 if (!isNaN(v)) { setSetMs(v); setTimeMode("set"); }
               }}
             />
@@ -1009,8 +1009,7 @@ export function Mission() {
             </button>
           </div>
           <small className="ms-local">
-            {timeMode === "now" ? "Live · " : ""}your time:{" "}
-            {new Date(t).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}
+            {timeMode === "now" ? "Live now · " : ""}UTC {new Date(t).toISOString().slice(0, 16).replace("T", " ")}
           </small>
         </label>
         <div className="ms-steps" role="group" aria-label="Step time">
