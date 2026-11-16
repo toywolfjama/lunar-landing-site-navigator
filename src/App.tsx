@@ -4,6 +4,7 @@ import * as P from "./physics/lunarAstronomy";
 import { LanderGame, LIMITS } from "./Lander";
 import { STR, UI, PROV, Lang } from "./i18n";
 import { MoonGlobe } from "./MoonGlobe";
+import { EarthMoon } from "./EarthMoon";
 import { Rubric, RubricTarget } from "./Rubric";
 import type { Landing } from "./landings";
 
@@ -1143,7 +1144,8 @@ export default function App() {
   const [crisis, setCrisis] = useState<Crisis | null>(null);
   const [showProv, setShowProv] = useState(false);
   const [briefing, setBriefing] = useState(true);
-  const [appMode, setAppMode] = useState<"moon" | "planner" | "game">(() => (location.hash.length > 4 ? "planner" : "moon"));
+  const [appMode, setAppMode] = useState<"overview" | "moon" | "planner" | "game">(() => (location.hash.length > 4 ? "planner" : "overview"));
+  const overview = appMode === "overview";
   const [showRubric, setShowRubric] = useState(false);
   const planner = appMode === "planner";
   const [pins, setPins] = useState<Pin[]>([]);
@@ -1617,9 +1619,10 @@ export default function App() {
     );
 
   /* From the Moon globe into the planner or the lander game */
-  const planLanding = (l: Landing) => {
+  const planLanding = (l: Landing, at: number | null = null) => {
     clearTimers();
     setBeat(null);
+    if (at !== null) setBaseUser(at);
     if (l.planner) setSiteId(l.planner);
     else {
       P.registerTerrain("custom", null);
@@ -1647,7 +1650,8 @@ export default function App() {
       setBriefing(false);
       setAppMode("planner");
       runBeat(1);
-    } else {
+    } else if (t === "overview") setAppMode("overview");
+    else {
       if (t === "planner") setBriefing(false);
       setAppMode(t);
     }
@@ -1656,7 +1660,7 @@ export default function App() {
 
   return (
     <LangCtx.Provider value={lang}>
-    <div className={"app" + (appMode === "moon" ? " moon-mode" : "")}>
+    <div className={"app" + (appMode === "moon" || overview ? " moon-mode" : "") + (overview ? " ov-mode" : "")}>
       <Starfield />
       <header className="top">
         <div className="brand">
@@ -1716,7 +1720,16 @@ export default function App() {
           <i />
           {feed === "live" ? "DATA: LIVE FEED" : feed === "local" ? "DATA: LOCAL CACHE" : "DATA: CONTACTING JPL"}
         </div>
-        <div className="seg modeseg" role="group" aria-label="Section">
+        {overview ? (
+          <button className="btn adv" onClick={() => { setBriefing(false); setAppMode("planner"); }}>
+            {tr("Advanced tools")} →
+          </button>
+        ) : (
+          <button className="btn adv" onClick={() => { clearTimers(); setCrisis(null); setAppMode("overview"); }}>
+            ← {tr("Overview")}
+          </button>
+        )}
+        <div className="seg modeseg" role="group" aria-label="Advanced tools" hidden={overview}>
           <button
             aria-pressed={appMode === "moon"}
             onClick={() => {
@@ -1725,7 +1738,7 @@ export default function App() {
               setAppMode("moon");
             }}
           >
-            {tr("Moon")}
+            {tr("Moon globe")}
           </button>
           <button aria-pressed={appMode === "planner"} onClick={() => setAppMode("planner")} aria-label={tr("Mission Planner")}>
             <span className="lg">{tr("Mission Planner")}</span>
@@ -1744,7 +1757,7 @@ export default function App() {
             <span className="sm" aria-hidden="true">{tr("Lander")}</span>
           </button>
         </div>
-        <label className="langsel">
+        <label className="langsel" hidden={overview}>
           <span className="sr">Language for explanations</span>
           <select id="lang" value={lang} onChange={(e) => setLang(e.target.value as Lang)} aria-label="Language for explanations">
             <option value="en">EN</option>
@@ -1835,7 +1848,8 @@ export default function App() {
         </section>
       )}
 
-      {appMode === "moon" && <MoonGlobe baseMs={baseMs} onPlan={planLanding} onFly={flyLanding} />}
+      {overview && <EarthMoon onPlan={planLanding} onFly={flyLanding} onRubric={() => setShowRubric(true)} />}
+      {appMode === "moon" && <MoonGlobe baseMs={baseMs} onPlan={(l) => planLanding(l)} onFly={flyLanding} />}
 
       <nav className="tour" aria-label="Guided tour" style={!planner ? { display: "none" } : undefined}>
         <div className="tour-head">
@@ -2472,7 +2486,7 @@ export default function App() {
         </div>
       </main>
 
-      <footer className="foot" hidden={appMode === "moon"}>
+      <footer className="foot" hidden={appMode === "moon" || overview}>
         <span>Sun and Earth: {feed === "live" ? "JPL Horizons live feed" : "analytic ephemeris, within 0.06° of JPL Horizons"}. Terrain and horizon masks: NASA LRO LOLA elevation models.</span>
         <span>Azimuth is measured from true local north, clockwise through east.</span>
         <span className="watermark">SYS_ARCH: AI-Generated Prototype (Claude Fable 5.2)</span>
