@@ -23,6 +23,10 @@ export function buildCrew(): Crew {
   const grey = m(new THREE.MeshStandardMaterial({ color: 0x9a9a9e, roughness: 0.7 }));
   const visor = m(new THREE.MeshStandardMaterial({ color: 0xd9a441, metalness: 0.9, roughness: 0.15 }));
   const pole = m(new THREE.MeshStandardMaterial({ color: 0xd0d0d4, metalness: 0.8, roughness: 0.3 }));
+  const dark = m(new THREE.MeshStandardMaterial({ color: 0x3a3b40, roughness: 0.6 }));
+  const metal = m(new THREE.MeshStandardMaterial({ color: 0xb8bcc4, metalness: 0.85, roughness: 0.3 }));
+  const red = m(new THREE.MeshStandardMaterial({ color: 0xc8463c, roughness: 0.6 }));
+  const blue = m(new THREE.MeshStandardMaterial({ color: 0x3a6fd0, roughness: 0.5, emissive: 0x0a1a40 }));
 
   const mesh = (geo: THREE.BufferGeometry, mat: THREE.Material, parent: THREE.Object3D, x = 0, y = 0, z = 0) => {
     const me = new THREE.Mesh(g(geo), mat);
@@ -35,20 +39,45 @@ export function buildCrew(): Crew {
   // astronaut, about 1.85 m tall, facing +z
   const body = new THREE.Group();
   group.add(body);
-  mesh(new THREE.CapsuleGeometry(0.24, 0.5, 4, 10), suit, body, 0, 1.12, 0);
-  mesh(new THREE.BoxGeometry(0.46, 0.6, 0.24), grey, body, 0, 1.2, -0.27); // life-support pack
-  mesh(new THREE.SphereGeometry(0.19, 16, 12), suit, body, 0, 1.64, 0);
-  const v = mesh(new THREE.SphereGeometry(0.15, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), visor, body, 0, 1.65, 0.07);
+  // torso, hip bearing, chest control unit and a mission stripe on one arm
+  mesh(new THREE.CapsuleGeometry(0.25, 0.48, 4, 14), suit, body, 0, 1.13, 0);
+  mesh(new THREE.TorusGeometry(0.22, 0.035, 8, 20), metal, body, 0, 0.88, 0).rotation.x = Math.PI / 2;
+  mesh(new THREE.BoxGeometry(0.3, 0.16, 0.1), grey, body, 0, 1.18, 0.25);
+  mesh(new THREE.BoxGeometry(0.05, 0.03, 0.02), blue, body, -0.08, 1.21, 0.305);
+  mesh(new THREE.BoxGeometry(0.05, 0.03, 0.02), red, body, 0.0, 1.21, 0.305);
+  mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.07, 8), metal, body, 0.09, 1.21, 0.31).rotation.x = Math.PI / 2;
+  // life-support pack with a top unit, side hoses and a short antenna
+  mesh(new THREE.BoxGeometry(0.48, 0.62, 0.26), grey, body, 0, 1.2, -0.29);
+  mesh(new THREE.BoxGeometry(0.42, 0.14, 0.22), suit, body, 0, 1.56, -0.29);
+  mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.3, 4), metal, body, 0.17, 1.76, -0.32);
+  for (const sx of [-1, 1]) {
+    const hose = mesh(new THREE.TorusGeometry(0.12, 0.018, 6, 12, Math.PI), dark, body, sx * 0.18, 1.12, 0.1);
+    hose.rotation.set(0, Math.PI / 2, Math.PI / 2);
+  }
+  // helmet: neck ring, shell, gold visor, visor frame and two helmet lamps
+  mesh(new THREE.TorusGeometry(0.15, 0.03, 8, 20), metal, body, 0, 1.49, 0).rotation.x = Math.PI / 2;
+  mesh(new THREE.SphereGeometry(0.2, 20, 14), suit, body, 0, 1.66, 0);
+  const v = mesh(new THREE.SphereGeometry(0.168, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2.2), visor, body, 0, 1.67, 0.06);
   v.rotation.x = Math.PI / 2;
-  const limb = (len: number, r: number) => {
+  mesh(new THREE.TorusGeometry(0.165, 0.014, 6, 24, Math.PI), metal, body, 0, 1.67, 0.06).rotation.z = Math.PI / 2;
+  for (const sx of [-1, 1]) mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.06, 10), metal, body, sx * 0.15, 1.78, 0.08).rotation.x = Math.PI / 2;
+  // limbs with joint rings; gloves and boots
+  const limb = (len: number, r: number, end: "glove" | "boot") => {
     const piv = new THREE.Group();
-    mesh(new THREE.CapsuleGeometry(r, len, 3, 8), suit, piv, 0, -len / 2 - r, 0);
+    mesh(new THREE.CapsuleGeometry(r, len, 3, 10), suit, piv, 0, -len / 2 - r, 0);
+    mesh(new THREE.TorusGeometry(r * 1.02, r * 0.18, 6, 14), grey, piv, 0, -len / 2 - r, 0).rotation.x = Math.PI / 2;
+    if (end === "glove") mesh(new THREE.SphereGeometry(r * 1.15, 10, 8), dark, piv, 0, -len - r * 1.6, 0.01);
+    else {
+      mesh(new THREE.BoxGeometry(r * 2.3, r * 1.2, r * 3.4), grey, piv, 0, -len - r * 1.4, r * 0.6);
+      mesh(new THREE.BoxGeometry(r * 2.4, r * 0.35, r * 3.5), dark, piv, 0, -len - r * 1.95, r * 0.6);
+    }
     return piv;
   };
-  const legL = limb(0.62, 0.1), legR = limb(0.62, 0.1);
+  const legL = limb(0.62, 0.1, "boot"), legR = limb(0.62, 0.1, "boot");
   legL.position.set(-0.12, 0.86, 0);
   legR.position.set(0.12, 0.86, 0);
-  const armL = limb(0.5, 0.075), armR = limb(0.5, 0.075);
+  const armL = limb(0.5, 0.075, "glove"), armR = limb(0.5, 0.075, "glove");
+  mesh(new THREE.BoxGeometry(0.16, 0.05, 0.16), red, armL, 0, -0.08, 0);
   armL.position.set(-0.3, 1.4, 0);
   armR.position.set(0.3, 1.4, 0);
   body.add(legL, legR, armL, armR);
