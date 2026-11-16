@@ -7,7 +7,6 @@ import { addSurfaceDetail } from "./surfaceDetail";
 
 const INNER = 1040; // m, half-size of the 20 m mesh (the LOLA patch is +-1050 m)
 const APRON = 30000; // m, half-size of the generated ground
-const PAD = 170; // m, half-size of the fine 2 m mesh around the site, with small craters and rocks
 const R_M = P.R_MOON_KM * 1000;
 
 function rng(seed: number) {
@@ -29,6 +28,7 @@ export interface Ground {
   setSpot: (x: number, y: number) => void; // clears rocks from under the lander and centres the blast mark
   setBlast: (k: number) => void; // 0..1: the bright, swept ground the engine leaves around the touchdown point
   setFade: (k: number) => void; // 0..1: dithered fade-in as the camera comes down, so the site ground never pops in
+  setAlbedo: (sample: (world: THREE.Vector3) => number) => void; // ground colour from the Moon map, so it blends in
   setDetailOrigin: (v: THREE.Vector3) => void; // shared origin for the shader detail, so it lines up with the sphere
   dispose: () => void;
 }
@@ -61,23 +61,6 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     }
     return h * (1 - smooth(APRON * 0.75, APRON, Math.max(Math.abs(x), Math.abs(y))));
   };
-  // metre-scale detail near the site: small fresh craters and lumpy regolith, gone by the edge of the fine mesh
-  const small = Array.from({ length: 320 }, () => {
-    const r = 0.8 + Math.pow(rnd(), 2.8) * 16;
-    return { x: (rnd() * 2 - 1) * PAD, y: (rnd() * 2 - 1) * PAD, r };
-  });
-  const fine = (x: number, y: number) => {
-    const fade = 1 - smooth(PAD * 0.7, PAD * 0.95, Math.max(Math.abs(x), Math.abs(y)));
-    if (fade <= 0) return 0;
-    let h = vnoise(x / 9 + 11, y / 9 + 2) * 0.35 + vnoise(x / 3 + 5, y / 3 + 8) * 0.08;
-    for (const c of small) {
-      const d = Math.hypot(x - c.x, y - c.y) / c.r;
-      if (d > 1.5) continue;
-      if (d < 1) h += -0.16 * c.r * (1 - d * d) + 0.03 * c.r;
-      else h += 0.03 * c.r * Math.pow(1 - (d - 1) / 0.5, 2);
-    }
-    return h * fade;
-  };
   // LOLA inside the patch; outside it the patch's edge heights carry on and fade out over 4 km while the generated
   // craters fade in, so a ridge or slope continues naturally instead of ending in a wall
   const coarse = (x: number, y: number) => {
@@ -88,7 +71,7 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     if (out === 0) return L;
     return L * (1 - smooth(0, 4000, out)) + gen(x, y) * smooth(0, 400, out);
   };
-  const heightAt = (x: number, y: number) => coarse(x, y) + fine(x, y);
+  const heightAt = coarse;
   // the slope a lander feels comes from the measured ground, not the decorative small craters
   const normalAt = (x: number, y: number) => {
     const e = 5;
@@ -148,7 +131,7 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     g.userData.base = base;
     g.userData.gridCount = n * n;
     const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
-    detail.push(addSurfaceDetail(m, new THREE.Vector3(), 1.6));
+    detail.push(addSurfaceDetail(m, new THREE.Vector3(), 1));
     const me = new THREE.Mesh(g, m);
     me.receiveShadow = true;
     geos.push(g);
@@ -157,9 +140,7 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     return me;
   };
 
-  const pad = mesh(PAD, 2, false, () => 0, 3);
-  pad.name = "ground-pad";
-  const inner = mesh(INNER, 20, false, (x, y) => (Math.max(Math.abs(x), Math.abs(y)) < PAD - 25 ? 3 : 0), 8);
+  const inner = mesh(INNER, 20, false, () => 0, 8);
   inner.castShadow = true;
   inner.name = "ground-inner";
   // under the 20 m mesh the coarse ground is pushed down out of sight; near the edge only slightly, so no trench shows
@@ -172,7 +153,8 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
   apron.receiveShadow = false; // the shadow map only covers the site; outside it, plain shading
 
   // slope colours on the 20 m mesh: green under 10 deg, amber to 15 deg, red above (LOLA sites only)
-  const setSlopeColors = (on: boolean) => { for (const me of [inner, pad]) slopeOn(me, on); };
+  let slopeState = false;
+  const setSlopeColors = (on: boolean) => { slopeState = on; slopeOn(inner, on); slopeOn(apron, false); };
   const slopeOn = (me: THREE.Mesh, on: boolean) => {
     const g = me.geometry as THREE.BufferGeometry;
     const pos = g.getAttribute("position") as THREE.BufferAttribute;
@@ -204,27 +186,26 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     }
     rockGeo.computeVertexNormals();
   }
-  const rockMat = new THREE.MeshStandardMaterial({ color: 0x8d8a84, roughness: 0.95, metalness: 0, flatShading: true });
+  const rockMat = new THREE.MeshStandardMaterial({ color: 0x7d7a75, roughness: 1, metalness: 0, flatShading: true });
   geos.push(rockGeo);
   mats.push(rockMat);
-  const NR = 900;
+  const NR = 48;
   const rocks = new THREE.InstancedMesh(rockGeo, rockMat, NR);
   rocks.castShadow = true;
   rocks.receiveShadow = true;
   rocks.name = "rocks";
   const rockData = Array.from({ length: NR }, (_, i) => {
-    const far = i > 780;
-    const a = rnd() * Math.PI * 2, d = far ? 150 + rnd() * 850 : Math.pow(rnd(), 0.8) * 165;
-    const sz = far ? 0.8 + Math.pow(rnd(), 3) * 3 : 0.1 + Math.pow(rnd(), 3) * 1.3;
+    // offsets from the touchdown spot: mostly small stones, a few larger ones, thinning out with distance
+    const a = rnd() * Math.PI * 2, d = 7 + Math.pow(rnd(), 1.6) * 70;
+    const sz = 0.12 + Math.pow(rnd(), 3.5) * (i < 4 ? 1.6 : 0.8);
     return { x: Math.cos(a) * d, y: Math.sin(a) * d, sz, sy: 0.45 + rnd() * 0.4, q: new THREE.Quaternion().setFromEuler(new THREE.Euler(rnd() * 6, rnd() * 6, rnd() * 6)) };
   });
   group.add(rocks);
   const m4 = new THREE.Matrix4();
   const setSpot = (sx: number, sy: number) => {
     rockData.forEach((r, i) => {
-      const clear = Math.hypot(r.x - sx, r.y - sy) < 6 + r.sz * 2;
-      const sz = clear ? 0 : r.sz;
-      m4.compose(new THREE.Vector3(r.x, heightAt(r.x, r.y) + sz * r.sy * 0.35, -r.y), r.q, new THREE.Vector3(sz, sz * r.sy, sz));
+      const x = sx + r.x, y = sy + r.y, sz = r.sz;
+      m4.compose(new THREE.Vector3(x, heightAt(x, y) + sz * r.sy * 0.25, -y), r.q, new THREE.Vector3(sz, sz * r.sy, sz));
       rocks.setMatrixAt(i, m4);
     });
     rocks.instanceMatrix.needsUpdate = true;
@@ -293,6 +274,20 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     setSpot,
     setBlast,
     setDetailOrigin: (v: THREE.Vector3) => detail.forEach((d) => d.setOrigin(v)),
+    setAlbedo: (sample: (world: THREE.Vector3) => number) => {
+      group.updateMatrixWorld(true);
+      const w = new THREE.Vector3();
+      for (const me of [inner, apron]) {
+        const g = me.geometry as THREE.BufferGeometry;
+        const pos = g.getAttribute("position") as THREE.BufferAttribute;
+        const base: number[] = g.userData.base;
+        for (let k = 0; k < g.userData.gridCount; k++) {
+          w.fromBufferAttribute(pos, k).applyMatrix4(group.matrixWorld);
+          base[k] = sample(w) * (0.94 + (base[k] - 0.47) * 0.6); // the map's albedo, with a little of the old mottling
+        }
+      }
+      setSlopeColors(slopeState);
+    },
     setFade: (k: number) => {
       const solid = k >= 0.999;
       for (const m of mats) {
