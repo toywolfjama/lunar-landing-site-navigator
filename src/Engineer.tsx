@@ -1,4 +1,4 @@
-/* Engineer mode: one dense sheet that says whether this spot, at this touchdown time, is a GO, and why. Every number
+/* Go / No-Go panel: one dense sheet that says whether this spot, at this touchdown time, is a GO, and why. Every number
    comes from the same models as the rest of the app (ephemeris, LOLA horizons and slopes, the power, thermal and link
    models in lunarAstronomy); the lander figures are an illustrative small robotic lander, and are labelled as such. */
 import { useMemo, useState } from "react";
@@ -145,13 +145,13 @@ export function EngineerPanel({ sel, t, cell, spot, A, onTime, onClose }: {
   };
 
   return (
-    <aside className="eng glass" aria-label="Engineer mode: landing readiness">
+    <aside className="eng glass" aria-label="Go / No-Go: landing readiness">
       <div className="eng-head">
         <div>
           <h2>Landing readiness</h2>
           <p>{sel.name} · {utc(t)}</p>
         </div>
-        <button className="eng-x" onClick={onClose} aria-label="Close engineer mode">×</button>
+        <button className="eng-x" onClick={onClose} aria-label="Close Go / No-Go">×</button>
       </div>
 
       <div className={"eng-verdict " + overall}>

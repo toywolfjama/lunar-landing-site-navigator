@@ -309,5 +309,5 @@ body.cine .top { opacity: 0; pointer-events: none; transition: opacity 0.4s; }
 }
 @media (max-width: 520px) {
   .eng-toggle { padding: 6px 8px; font-size: 0; gap: 0; }
-  .eng-toggle::after { content: "Eng"; font-size: 12px; margin-left: 6px; }
+  .eng-toggle::after { content: "Go"; font-size: 12px; margin-left: 6px; }
 }

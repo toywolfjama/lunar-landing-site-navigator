@@ -37,7 +37,7 @@ export default function App() {
         </div>
         <button className="eng-toggle" role="switch" aria-checked={eng} onClick={() => setEng((v) => !v)} title="Detailed GO / NO-GO data for the chosen spot and time">
           <span className="sw" aria-hidden="true" />
-          Engineer mode
+          Go / No-Go
         </button>
       </header>
       <Mission engineer={eng} onEngineer={setEng} />
