@@ -8,7 +8,7 @@ const html = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Lunar Landing Site Navigator</title>
+<title>LunaPoint · Lunar landing site checker</title>
 <meta name="theme-color" content="#000000">
 <meta name="description" content="Every Moon landing on a live, sunlit globe, and a planner for south-pole landing sites: sunlight, Earth contact and slope from NASA LRO data.">
 <style>

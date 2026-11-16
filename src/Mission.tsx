@@ -180,7 +180,7 @@ export function Mission({ engineer = false, onEngineer }: { engineer?: boolean; 
       setGlOk(false);
       return;
     }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75)); // sharp enough on retina, far fewer pixels to shade
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -306,6 +306,9 @@ export function Mission({ engineer = false, onEngineer }: { engineer?: boolean; 
     scene.add(moonLabel);
     const landerLabel = mkLabel("Lander", "lander");
     scene.add(landerLabel);
+    // a small ring around the lander, so it can be found when it is only a few pixels (never in the cinematic)
+    const landerMark = mkLabel("", "mark");
+    scene.add(landerMark);
 
     // lander
     const lander: LanderModel = buildLander();
@@ -529,6 +532,13 @@ export function Mission({ engineer = false, onEngineer }: { engineer?: boolean; 
         }
         camera.position.copy(smp.pos).add(st.camOff);
         target.copy(smp.pos).add(st.camTOff);
+        // never below the ground (or a rock): at least 1.8 m over the terrain under the camera
+        if (st.ground && camera.position.distanceTo(st.siteP) < 14) {
+          const g = st.ground as Ground;
+          const l = g.group.worldToLocal(camera.position.clone());
+          const floor = g.heightAt(l.x, -l.z) + 1.8;
+          if (l.y < floor) { l.y = floor; camera.position.copy(g.group.localToWorld(l)); }
+        }
         camera.up.copy(st.camUp);
         camera.lookAt(target);
         if (Math.abs(camera.fov - st.camFov) > 0.01) camera.fov = st.camFov;
@@ -581,6 +591,13 @@ export function Mission({ engineer = false, onEngineer }: { engineer?: boolean; 
       const camR = camera.position.distanceTo(st.siteP);
       landerLabel.position.copy(smp.pos);
       landerLabel.visible = !cineShot && camera.position.distanceTo(smp.pos) > 3 && (L.playing || st.tau < TOTAL_ANIM - 0.01 || camR < 2500);
+      landerMark.position.copy(landerHold.position);
+      {
+        const dl = camera.position.distanceTo(landerHold.position);
+        const show = !cineShot && dl > 0.06 && !landerLabel.visible;
+        landerMark.visible = show;
+        if (show) (landerMark.element as HTMLElement).style.opacity = String(Math.min(0.85, (dl - 0.06) / 0.2));
+      }
       moonLabel.position.set(0, -st.R * 1.15, 0);
       moonLabel.visible = !cineShot && camR > 3000;
       (st.phaseLabels as CSS2DObject[]).forEach((o: any) => {
@@ -596,6 +613,8 @@ export function Mission({ engineer = false, onEngineer }: { engineer?: boolean; 
       }
       for (const m of lineMats) m.resolution.set(renderer.domElement.clientWidth, renderer.domElement.clientHeight);
       if (st.ground) st.ground.group.visible = camR < 2500;
+      // shadows only matter close to the site; skip the shadow pass everywhere else
+      renderer.shadowMap.autoUpdate = camR < 40;
       ring.visible = !cineShot && !L.playing && camR < 30;
       // the Sun sits 1,000,000 km out along the true Sun direction from wherever the camera is
       if (st.sunDir) {

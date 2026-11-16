@@ -77,7 +77,7 @@ export function shot(smp: Sample, ctx: ShotContext, _timeS: number): Shot {
     const a = -0.6 + u * 0.8;
     const dir = ctx.sunHoriz.clone().applyAxisAngle(ctx.siteUp, a); // start on the sunlit side
 
-    s = { pos: at(ctx.spot, [dir, 0.017], [ctx.siteUp, 0.005]), target: at(ctx.spot, [ctx.siteUp, 0.0018]), up: ctx.siteUp, fov: 45, slow: u < 0.45 ? 0.5 : 1, id: "td" };
+    s = { pos: at(ctx.spot, [dir, 0.018], [ctx.siteUp, 0.007]), target: at(ctx.spot, [ctx.siteUp, 0.0018]), up: ctx.siteUp, fov: 45, slow: u < 0.45 ? 0.5 : 1, id: "td" };
   }
   return s;
 }

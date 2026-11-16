@@ -31,7 +31,7 @@ export default function App() {
         <div className="brand">
           <div className="brand-mark" aria-hidden="true" />
           <div>
-            <h1>Lunar Landing Site Navigator</h1>
+            <h1>LunaPoint</h1>
             <p>Pick a site, check it, and fly a lander there</p>
           </div>
         </div>
