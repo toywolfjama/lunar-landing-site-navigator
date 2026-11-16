@@ -14,7 +14,6 @@ import { Sky } from "./Sky";
 import { buildGround, Ground } from "./scene/terrain";
 import { addSurfaceDetail } from "./scene/surfaceDetail";
 import { EngineerPanel } from "./Engineer";
-import { buildCrew } from "./scene/astronaut";
 import { buildLander, LanderModel } from "./scene/lander";
 import { buildMission, Mission as MissionPath, PHASES, PHASE_START, TOTAL_ANIM } from "./scene/trajectory";
 import { shot, ShotContext } from "./scene/cinema";
@@ -282,7 +281,7 @@ export function Mission({ engineer = false, onEngineer, demoReq = 0 }: { enginee
     // light: the Sun, a hint of earthshine, and very little ambient
     const sun = new THREE.DirectionalLight(0xfff6ea, 3.2);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(1024, 1024); // the shadow box is only 120 m wide near the pad: 1024 is ~12 cm a texel
+    sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.bias = -0.0004;
     sun.shadow.normalBias = 0.0004;
     const sc = sun.shadow.camera as THREE.OrthographicCamera;
@@ -340,8 +339,6 @@ export function Mission({ engineer = false, onEngineer, demoReq = 0 }: { enginee
     const landerHold = new THREE.Group();
     lander.group.scale.setScalar(0.001);
     landerHold.add(lander.group);
-    const crew = buildCrew();
-    lander.group.add(crew.group);
     scene.add(landerHold);
 
     // touchdown target ring
@@ -372,7 +369,7 @@ export function Mission({ engineer = false, onEngineer, demoReq = 0 }: { enginee
     composer.addPass(bloom);
     composer.addPass(new OutputPass());
 
-    S.current = { crew, moonDetail, sunSprite, composer, renderer, labels, scene, camera, controls, moon, earth, atmo, sun, earthshine, lander, landerHold, ring, pathAll, pathDone, radio, lineMats, dots, dotLayer, earthLabel, moonLabel, landerLabel, mkLabel, phaseLabels: [] as CSS2DObject[] };
+    S.current = { moonDetail, sunSprite, composer, renderer, labels, scene, camera, controls, moon, earth, atmo, sun, earthshine, lander, landerHold, ring, pathAll, pathDone, radio, lineMats, dots, dotLayer, earthLabel, moonLabel, landerLabel, mkLabel, phaseLabels: [] as CSS2DObject[] };
 
     const resize = () => {
       const r = host.getBoundingClientRect();
@@ -482,7 +479,7 @@ export function Mission({ engineer = false, onEngineer, demoReq = 0 }: { enginee
       const tauBefore = st.tau;
       if (L.playing) {
         st.tau = Math.min(TOTAL_ANIM, st.tau + dt * L.speed * slow);
-        if (st.tau >= TOTAL_ANIM) { api.current.ended(); if (st.crewT0 === undefined) st.crewT0 = now; }
+        if (st.tau >= TOTAL_ANIM) api.current.ended();
         smp = mission.sample(st.tau);
       }
       // lander pose; on touchdown it settles onto the ground, or tips over on a steep spot
@@ -515,9 +512,6 @@ export function Mission({ engineer = false, onEngineer, demoReq = 0 }: { enginee
         lander.setRcs(jumped || smp.phase === PHASES.length - 1 ? 0 : rate, ts);
       }
       lander.setThrottle(st.tau >= TOTAL_ANIM ? 0 : smp.throttle, ts);
-      // after a flown landing the astronaut climbs down and plants the flag; otherwise the final pose (never if it tipped)
-      if (st.tau < TOTAL_ANIM - 0.01 || L.A.tips) { st.crewT0 = undefined; st.crew.update(-1); }
-      else st.crew.update(st.crewT0 !== undefined ? (now - st.crewT0) / 1000 - 1.5 : Infinity);
       lander.setDust(smp.altKm * 1000, smp.throttle, ts);
       // the engine sweeps the ground bright in the last few metres; it stays once landed
       if (st.ground) st.ground.setBlast(st.tau >= TOTAL_ANIM - 0.01 || smp.phase === PHASES.length - 1 ? 1 : smp.phase === PHASES.length - 2 ? Math.max(0, 1 - (smp.altKm * 1000) / 25) : 0);
@@ -648,11 +642,7 @@ export function Mission({ engineer = false, onEngineer, demoReq = 0 }: { enginee
         if (Math.abs(k - (st.groundFade ?? -1)) > 0.004) { st.groundFade = k; st.ground.setFade(k); }
       }
       // shadows only matter close to the site; skip the shadow pass everywhere else
-      const crewMoving = st.crewT0 !== undefined && now - st.crewT0 < 13000;
-      const moving = (L.playing && st.tau < TOTAL_ANIM) || crewMoving;
-      renderer.shadowMap.autoUpdate = camR < 40 && moving;
-      const sk = st.tau + ":" + smp.pos.x + ":" + st.sunDir?.x + ":" + landerHold.quaternion.x;
-      if (camR < 40 && !moving && st.shadowFresh !== sk) { renderer.shadowMap.needsUpdate = true; st.shadowFresh = sk; }
+      renderer.shadowMap.autoUpdate = camR < 40;
       ring.visible = !cineShot && !L.playing && camR < 30;
       // the Sun sits 1,000,000 km out along the true Sun direction from wherever the camera is
       if (st.sunDir) {

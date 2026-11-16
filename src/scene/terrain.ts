@@ -25,7 +25,7 @@ export interface Ground {
   normalAt: (x: number, y: number) => THREE.Vector3; // local frame
   lola: boolean;
   setSlopeColors: (on: boolean) => void;
-  setSpot: (x: number, y: number) => void; // centres the blast mark on the touchdown spot
+  setSpot: (x: number, y: number) => void; // clears rocks from under the lander and centres the blast mark
   setBlast: (k: number) => void; // 0..1: the bright, swept ground the engine leaves around the touchdown point
   setFade: (k: number) => void; // 0..1: dithered fade-in as the camera comes down, so the site ground never pops in
   setAlbedo: (sample: (world: THREE.Vector3) => number) => void; // ground colour from the Moon map, so it blends in
@@ -59,34 +59,17 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
       if (d < 1) h += -0.14 * c.r * (1 - d * d) + 0.035 * c.r; // bowl
       else h += 0.035 * c.r * Math.pow(1 - (d - 1) / 0.6, 2); // rim and ejecta
     }
-    // relief fades out on a circle, well inside the square mesh, so no square outline shows against the sphere
-    return h * (1 - smooth(APRON * 0.4, APRON * 0.8, Math.hypot(x, y)));
+    return h * (1 - smooth(APRON * 0.75, APRON, Math.max(Math.abs(x), Math.abs(y))));
   };
   // LOLA inside the patch; outside it the patch's edge heights carry on and fade out over 4 km while the generated
   // craters fade in, so a ridge or slope continues naturally instead of ending in a wall
-  // the patch's mean tilt (least squares over its 100 m grid); the ground outside continues it and levels off by 14 km,
-  // so the 2 km patch never stands as a raised or sunken block
-  let pa = 0, pb = 0, pc = 0;
-  if (lola) {
-    let n = 0, sx = 0, sy = 0, sz = 0, sxx = 0, syy = 0, sxz = 0, syz = 0;
-    for (let j = -10; j <= 10; j++)
-      for (let i = -10; i <= 10; i++) {
-        const x = i * 100, y = j * 100, z = P.patchElevationAt(site, x, y) - datum;
-        n++; sx += x; sy += y; sz += z; sxx += x * x; syy += y * y; sxz += x * z; syz += y * z;
-      }
-    pb = (sxz - (sx * sz) / n) / (sxx - (sx * sx) / n);
-    pc = (syz - (sy * sz) / n) / (syy - (sy * sy) / n);
-    pa = (sz - pb * sx - pc * sy) / n;
-  }
-  const plane = (x: number, y: number) => pa + pb * x + pc * y;
   const coarse = (x: number, y: number) => {
     if (!lola) return gen(x, y);
     const cx = Math.max(-INNER, Math.min(INNER, x)), cy = Math.max(-INNER, Math.min(INNER, y));
     const L = P.patchElevationAt(site, cx, cy) - datum;
     const out = Math.hypot(x - cx, y - cy);
     if (out === 0) return L;
-    const pl = plane(x, y) * (1 - smooth(1500, 14000, Math.hypot(x, y)));
-    return pl + (L - plane(cx, cy)) * (1 - smooth(0, 1500, out)) + gen(x, y) * smooth(0, 400, out);
+    return L * (1 - smooth(0, 4000, out)) + gen(x, y) * smooth(0, 400, out);
   };
   const heightAt = coarse;
   // the slope a lander feels comes from the measured ground, not the decorative small craters
@@ -159,39 +142,12 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
 
   const inner = mesh(INNER, 20, false, () => 0, 8);
   inner.castShadow = true;
-  {
-    const ig = inner.geometry as THREE.BufferGeometry;
-    const pos = ig.getAttribute("position") as THREE.BufferAttribute;
-    const c3 = ig.getAttribute("color") as THREE.BufferAttribute;
-    const c4 = new Float32Array(pos.count * 4);
-    for (let k = 0; k < pos.count; k++) {
-      const e = Math.max(Math.abs(pos.getX(k)), Math.abs(pos.getZ(k)));
-      c4.set([c3.getX(k), c3.getY(k), c3.getZ(k), k >= ig.userData.gridCount ? 0 : 1 - smooth(INNER - 150, INNER - 10, e)], k * 4);
-    }
-    ig.setAttribute("color", new THREE.BufferAttribute(c4, 4));
-    (inner.material as THREE.MeshStandardMaterial).alphaHash = true;
-  }
   inner.name = "ground-inner";
   // under the 20 m mesh the coarse ground is pushed down out of sight; near the edge only slightly, so no trench shows
   const apron = mesh(APRON, 250, true, (x, y) => {
     const m = Math.max(Math.abs(x), Math.abs(y));
-    return m < INNER - 300 ? 25 : m < INNER ? 5 : 0;
+    return m < INNER - 160 ? 25 : m < INNER ? 3 : 0;
   }, 0);
-  // the outer ring of the apron dissolves into the Moon sphere (dithered alpha, no sorting), so there is no edge
-  {
-    const ag = apron.geometry as THREE.BufferGeometry;
-    const pos = ag.getAttribute("position") as THREE.BufferAttribute;
-    const c3 = ag.getAttribute("color") as THREE.BufferAttribute;
-    const c4 = new Float32Array(pos.count * 4);
-    for (let k = 0; k < pos.count; k++) {
-      const r = Math.hypot(pos.getX(k), pos.getZ(k));
-      c4.set([c3.getX(k), c3.getY(k), c3.getZ(k), 1 - smooth(APRON * 0.45, APRON * 0.92, r)], k * 4);
-    }
-    ag.setAttribute("color", new THREE.BufferAttribute(c4, 4));
-    const am = apron.material as THREE.MeshStandardMaterial;
-    am.alphaHash = true;
-    am.needsUpdate = true;
-  }
 
   apron.name = "ground-apron";
   apron.receiveShadow = false; // the shadow map only covers the site; outside it, plain shading
@@ -219,8 +175,40 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     col.needsUpdate = true;
   };
 
+  // rocks: one instanced mesh, a few hundred stones near the site and some boulders further out
+  const rockGeo = new THREE.IcosahedronGeometry(1, 1);
+  {
+    const p = rockGeo.getAttribute("position") as THREE.BufferAttribute;
+    for (let i = 0; i < p.count; i++) {
+      const v = new THREE.Vector3().fromBufferAttribute(p, i);
+      v.multiplyScalar(0.8 + rnd() * 0.35);
+      p.setXYZ(i, v.x, v.y, v.z);
+    }
+    rockGeo.computeVertexNormals();
+  }
+  const rockMat = new THREE.MeshStandardMaterial({ color: 0x7d7a75, roughness: 1, metalness: 0, flatShading: true });
+  geos.push(rockGeo);
+  mats.push(rockMat);
+  const NR = 48;
+  const rocks = new THREE.InstancedMesh(rockGeo, rockMat, NR);
+  rocks.castShadow = true;
+  rocks.receiveShadow = true;
+  rocks.name = "rocks";
+  const rockData = Array.from({ length: NR }, (_, i) => {
+    // offsets from the touchdown spot: mostly small stones, a few larger ones, thinning out with distance
+    const a = rnd() * Math.PI * 2, d = 7 + Math.pow(rnd(), 1.6) * 70;
+    const sz = 0.12 + Math.pow(rnd(), 3.5) * (i < 4 ? 1.6 : 0.8);
+    return { x: Math.cos(a) * d, y: Math.sin(a) * d, sz, sy: 0.45 + rnd() * 0.4, q: new THREE.Quaternion().setFromEuler(new THREE.Euler(rnd() * 6, rnd() * 6, rnd() * 6)) };
+  });
+  group.add(rocks);
   const m4 = new THREE.Matrix4();
   const setSpot = (sx: number, sy: number) => {
+    rockData.forEach((r, i) => {
+      const x = sx + r.x, y = sy + r.y, sz = r.sz;
+      m4.compose(new THREE.Vector3(x, heightAt(x, y) + sz * r.sy * 0.25, -y), r.q, new THREE.Vector3(sz, sz * r.sy, sz));
+      rocks.setMatrixAt(i, m4);
+    });
+    rocks.instanceMatrix.needsUpdate = true;
     // blast mark: a small draped grid around the spot
     const bp = blastGeo.getAttribute("position") as THREE.BufferAttribute;
     for (let i = 0; i < bp.count; i++) {
@@ -293,9 +281,9 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
         const g = me.geometry as THREE.BufferGeometry;
         const pos = g.getAttribute("position") as THREE.BufferAttribute;
         const base: number[] = g.userData.base;
-        for (let k = 0; k < pos.count; k++) {
+        for (let k = 0; k < g.userData.gridCount; k++) {
           w.fromBufferAttribute(pos, k).applyMatrix4(group.matrixWorld);
-          base[k] = sample(w); // the map's own albedo, exactly as the sphere shows it (skirt included)
+          base[k] = sample(w) * (0.94 + (base[k] - 0.47) * 0.6); // the map's albedo, with a little of the old mottling
         }
       }
       setSlopeColors(slopeState);
@@ -305,8 +293,7 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
       for (const m of mats) {
         if (m === blastMat) continue;
         const sm = m as THREE.MeshStandardMaterial;
-        const hash = !solid || sm === apron.material || sm === inner.material;
-        if (sm.alphaHash !== hash) { sm.alphaHash = hash; sm.needsUpdate = true; }
+        if (sm.alphaHash !== !solid) { sm.alphaHash = !solid; sm.needsUpdate = true; }
         sm.opacity = k;
       }
       group.visible = k > 0.001;
