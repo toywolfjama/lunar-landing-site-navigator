@@ -8,6 +8,7 @@ export interface LanderModel {
   pointAntenna: (dirLocal: THREE.Vector3 | null) => void;
   setDust: (heightM: number, throttle: number, timeS: number) => void;
   setLamps: (heightM: number) => void;
+  setRcs: (rateRadS: number, timeS: number) => void;
   dispose: () => void;
 }
 
@@ -81,11 +82,60 @@ export function buildLander(): LanderModel {
   );
   const bellMat = mat(new THREE.MeshStandardMaterial({ color: 0x3c3c40, metalness: 0.8, roughness: 0.4, side: THREE.DoubleSide, emissive: 0xff7a2a, emissiveIntensity: 0 }));
   add(bell, bellMat);
-  // reaction-control thruster pods at four corners
+  // reaction-control thruster pods at four corners, each with nozzles up, down and sideways; puffs show when it turns
+  const puffMat = mat(new THREE.MeshBasicMaterial({ color: 0xeef3ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+  const puffGeo = keep(new THREE.ConeGeometry(0.09, 0.7, 10, 1, true));
+  puffGeo.translate(0, -0.35, 0);
+  const puffs: THREE.Mesh[] = [];
+  const nozzle = keep(new THREE.CylinderGeometry(0.025, 0.05, 0.09, 10, 1, true));
   for (let k = 0; k < 4; k++) {
     const a = Math.PI / 8 + (k * Math.PI) / 2;
-    add(new THREE.BoxGeometry(0.18, 0.18, 0.18), dark, Math.cos(a) * 1.32, 2.55, Math.sin(a) * 1.32);
+    const c = Math.cos(a), sn = Math.sin(a);
+    const pod = new THREE.Group();
+    pod.position.set(c * 1.36, 2.55, sn * 1.36);
+    pod.rotation.y = -a;
+    group.add(pod);
+    const box = new THREE.Mesh(keep(new THREE.BoxGeometry(0.2, 0.2, 0.2)), dark);
+    box.castShadow = true;
+    pod.add(box);
+    for (const [dir, rx, rz] of [[new THREE.Vector3(0, 1, 0), Math.PI, 0], [new THREE.Vector3(0, -1, 0), 0, 0], [new THREE.Vector3(1, 0, 0), 0, Math.PI / 2]] as [THREE.Vector3, number, number][]) {
+      const nz = new THREE.Mesh(nozzle, strut);
+      nz.position.copy(dir).multiplyScalar(0.13);
+      nz.rotation.set(rx, 0, rz);
+      pod.add(nz);
+      const pf = new THREE.Mesh(puffGeo, puffMat);
+      pf.position.copy(dir).multiplyScalar(0.17);
+      pf.rotation.set(rx, 0, rz);
+      pf.visible = false;
+      pod.add(pf);
+      puffs.push(pf);
+    }
   }
+  // instruments: a landing radar and a down-looking camera under the deck, a star tracker and a payload rack on top
+  add(new THREE.BoxGeometry(0.42, 0.14, 0.32), dark, 0.62, 1.05, -0.35);
+  add(new THREE.CylinderGeometry(0.11, 0.11, 0.06, 16), mat(new THREE.MeshStandardMaterial({ color: 0x0b0d12, metalness: 0.2, roughness: 0.1 })), 0.62, 0.97, -0.35);
+  add(new THREE.CylinderGeometry(0.07, 0.09, 0.22, 12), silver, -0.6, 0.98, 0.42);
+  const tracker = add(new THREE.CylinderGeometry(0.08, 0.12, 0.26, 12, 1, true), dark, 0.25, 2.95, -0.85);
+  tracker.rotation.x = -0.5;
+  add(new THREE.BoxGeometry(0.55, 0.3, 0.42), white, -0.15, 2.95, 0.15);
+  add(new THREE.BoxGeometry(0.56, 0.04, 0.43), silver, -0.15, 3.11, 0.15);
+  // a cable tray and handrails around the top deck
+  for (let k = 0; k < 8; k++) {
+    const a0 = (k * Math.PI) / 4 + Math.PI / 8, a1 = a0 + Math.PI / 4;
+    const p0 = new THREE.Vector3(Math.cos(a0) * 1.3, 2.86, Math.sin(a0) * 1.3), p1 = new THREE.Vector3(Math.cos(a1) * 1.3, 2.86, Math.sin(a1) * 1.3);
+    const rail = add(new THREE.CylinderGeometry(0.015, 0.015, p0.distanceTo(p1), 6), strut);
+    rail.position.copy(p0).add(p1).multiplyScalar(0.5);
+    rail.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), p1.clone().sub(p0).normalize());
+    rail.castShadow = false;
+  }
+  // navigation strobes: red and green on the deck rim, a white beacon on top
+  const strobeMats = [0xff3b30, 0x34c759, 0xffffff].map((c) => mat(new THREE.MeshBasicMaterial({ color: c })));
+  const strobes = [
+    add(new THREE.SphereGeometry(0.05, 10, 8), strobeMats[0], 1.3, 2.86, 0),
+    add(new THREE.SphereGeometry(0.05, 10, 8), strobeMats[1], -1.3, 2.86, 0),
+    add(new THREE.SphereGeometry(0.06, 10, 8), strobeMats[2], 0.55, 3.62, 0.2),
+  ];
+  strobes.forEach((m) => (m.castShadow = false));
   // landing legs: a main strut and a brace to each footpad
   const strutBetween = (a: THREE.Vector3, b: THREE.Vector3, r: number) => {
     const len = a.distanceTo(b);
@@ -101,6 +151,8 @@ export function buildLander(): LanderModel {
     strutBetween(new THREE.Vector3(c * 1.15, 1.5, s * 1.15), foot, 0.06);
     strutBetween(new THREE.Vector3(c * 1.0, 1.15, s * 1.0), new THREE.Vector3(c * 1.75, 0.55, s * 1.75), 0.04);
     add(new THREE.CylinderGeometry(0.32, 0.36, 0.1, 18), strut, foot.x, 0.05, foot.z);
+    // shock absorber sleeve along the upper part of the main strut
+    strutBetween(new THREE.Vector3(c * 1.3, 1.303, s * 1.3), new THREE.Vector3(c * 1.6, 0.909, s * 1.6), 0.095);
   }
   // high-gain antenna on a mast; the dish group turns to face Earth after landing
   add(new THREE.CylinderGeometry(0.04, 0.04, 0.75, 8), strut, -0.2, 3.15, 0.75);
@@ -190,7 +242,26 @@ export function buildLander(): LanderModel {
     }
     dustGeo.getAttribute("position").needsUpdate = true;
   };
+  let rcsGlow = 0;
+  const setRcs = (rate: number, timeS: number) => {
+    // short bursts while the lander slews; brighter the faster it turns
+    const want = Math.min(1, Math.max(0, (rate - 0.03) * 4));
+    rcsGlow += (want - rcsGlow) * 0.35;
+    const on = rcsGlow > 0.04;
+    puffMat.opacity = on ? 0.55 * rcsGlow * (0.75 + 0.25 * Math.sin(timeS * 47)) : 0;
+    puffs.forEach((p, i) => {
+      // alternate pods fire, as a real attitude-control system pairs them
+      p.visible = on && (i % 3 !== 2 || rcsGlow > 0.5) && Math.sin(timeS * 9 + i * 1.7) > -0.3;
+      const l = 0.6 + rcsGlow * 0.8;
+      p.scale.set(1, l, 1);
+    });
+    // strobes: red/green steady blink, top beacon double-flash
+    const b = (timeS % 1.4) / 1.4;
+    strobeMats[0].color.setHex(b < 0.5 ? 0xff3b30 : 0x3a0d0b);
+    strobeMats[1].color.setHex(b < 0.5 ? 0x34c759 : 0x0c2e15);
+    strobeMats[2].color.setHex(b < 0.05 || (b > 0.12 && b < 0.17) ? 0xffffff : 0x2a2a2a);
+  };
   setThrottle(0, 0);
   pointAntenna(null);
-  return { group, setThrottle, pointAntenna, setDust, setLamps, dispose: () => (geos.forEach((g) => g.dispose()), mats.forEach((m) => m.dispose())) };
+  return { group, setThrottle, pointAntenna, setDust, setLamps, setRcs, dispose: () => (geos.forEach((g) => g.dispose()), mats.forEach((m) => m.dispose())) };
 }

@@ -439,8 +439,13 @@ export function Mission() {
       let smp = mission.sample(st.tau);
       if (st.shotCtx) st.shotCtx.aspect = camera.aspect;
       const cineShot = L.view === "cine" ? shot(smp, st.shotCtx as ShotContext, ts) : null;
-      const slow = cineShot ? cineShot.slow : 1;
-      if ((slow < 1) !== st.slow) { st.slow = slow < 1; setSlowMo(slow < 1); }
+      if (!cineShot) st.camId = undefined;
+      const slowWant = cineShot ? cineShot.slow : 1;
+      // ease in and out of slow motion instead of snapping the playback rate
+      st.slowS = st.slowS === undefined ? slowWant : st.slowS + (slowWant - st.slowS) * (1 - Math.exp(-dt * 4));
+      const slow = st.slowS as number;
+      if ((slowWant < 1) !== st.slow) { st.slow = slowWant < 1; setSlowMo(slowWant < 1); }
+      const tauBefore = st.tau;
       if (L.playing) {
         st.tau = Math.min(TOTAL_ANIM, st.tau + dt * L.speed * slow);
         if (st.tau >= TOTAL_ANIM) api.current.ended();
@@ -460,8 +465,21 @@ export function Mission() {
           const pivot = smp.pos.clone().add(st.downhill.clone().multiplyScalar(0.0022));
           landerHold.position.copy(pivot).add(smp.pos.clone().sub(pivot).applyQuaternion(tip));
         }
-        landerHold.quaternion.copy(q);
-      } else landerHold.quaternion.copy(smp.quat);
+        st.qWant = q;
+      } else st.qWant = smp.quat;
+      // follow the planned attitude through a short low-pass, so the turns read as smooth thruster-driven slews;
+      // jumps (scrubbing, restarts) snap straight to it
+      {
+        const want = st.qWant as THREE.Quaternion;
+        const jumped = !L.playing || Math.abs(st.tau - tauBefore) > 0.5 || !st.qShown;
+        if (jumped) st.qShown = want.clone();
+        else (st.qShown as THREE.Quaternion).slerp(want, 1 - Math.exp(-dt * 7));
+        const prevQ = st.qPrev as THREE.Quaternion | undefined;
+        const rate = prevQ && dt > 0 ? prevQ.angleTo(st.qShown) / dt : 0; // rad/s
+        st.qPrev = (st.qShown as THREE.Quaternion).clone();
+        landerHold.quaternion.copy(st.qShown);
+        lander.setRcs(jumped || smp.phase === PHASES.length - 1 ? 0 : rate, ts);
+      }
       lander.setThrottle(st.tau >= TOTAL_ANIM ? 0 : smp.throttle, ts);
       lander.setDust(smp.altKm * 1000, smp.throttle, ts);
       lander.setLamps(st.tau >= TOTAL_ANIM - 0.01 ? 1e9 : smp.altKm * 1000);
@@ -491,11 +509,23 @@ export function Mission() {
       controls.enableZoom = L.view !== "follow"; // in chase, zoom scales the automatic framing instead
       if (cineShot) {
         const sh = shot(smp, st.shotCtx as ShotContext, ts);
-        camera.position.copy(sh.pos);
-        target.copy(sh.target);
-        camera.up.copy(sh.up);
-        camera.lookAt(sh.target);
-        if (Math.abs(camera.fov - sh.fov) > 0.01) camera.fov = sh.fov;
+        // cuts are instant; within a shot the camera eases toward its mark, relative to the lander, so it glides
+        const cut = sh.id !== st.camId || !L.playing || Math.abs(st.tau - tauBefore) > 0.5 || !st.camOff;
+        const kc = 1 - Math.exp(-dt * 5);
+        const off = sh.pos.clone().sub(smp.pos), toff = sh.target.clone().sub(smp.pos);
+        if (cut) {
+          st.camId = sh.id; st.camOff = off; st.camTOff = toff; st.camUp = sh.up.clone(); st.camFov = sh.fov;
+        } else {
+          (st.camOff as THREE.Vector3).lerp(off, kc);
+          (st.camTOff as THREE.Vector3).lerp(toff, kc);
+          (st.camUp as THREE.Vector3).lerp(sh.up, kc).normalize();
+          st.camFov += (sh.fov - st.camFov) * kc;
+        }
+        camera.position.copy(smp.pos).add(st.camOff);
+        target.copy(smp.pos).add(st.camTOff);
+        camera.up.copy(st.camUp);
+        camera.lookAt(target);
+        if (Math.abs(camera.fov - st.camFov) > 0.01) camera.fov = st.camFov;
         st.nearSite = undefined; // re-derive "up" when the cinematic ends
       } else if (camera.fov !== 45) camera.fov = 45;
       if (cineShot) {
@@ -710,6 +740,7 @@ export function Mission() {
       groundCamFar: camAt(150, 70, 2.5),
       groundCamNear: camAt(30, 14, 1.6),
       sideAtSite: new THREE.Vector3().crossVectors(mission.heading, s).normalize(),
+      orbitN: mission.normal.clone(),
       sunHoriz: (() => { const h = sDir.clone().sub(s.clone().multiplyScalar(sDir.dot(s))); return h.lengthSq() > 1e-8 ? h.normalize() : east.clone(); })(),
     } as ShotContext;
 

@@ -11,6 +11,7 @@ export interface ShotContext {
   groundCamNear: THREE.Vector3; // ~35 m from the spot, low
   sideAtSite: THREE.Vector3; // horizontal, across the approach
   sunHoriz: THREE.Vector3; // horizontal direction toward the Sun at the site
+  orbitN?: THREE.Vector3; // normal of the orbit plane: a side direction that never flips
   aspect?: number; // camera aspect, so wide shots also fit a phone
 }
 
@@ -27,7 +28,7 @@ export function shot(smp: Sample, ctx: ShotContext, _timeS: number): Shot {
   const p = smp.pos;
   const radial = p.clone().normalize();
   const fwd = smp.vel.clone().normalize();
-  let side = new THREE.Vector3().crossVectors(fwd, radial);
+  let side = ctx.orbitN ? ctx.orbitN.clone().negate() : new THREE.Vector3().crossVectors(fwd, radial);
   if (side.lengthSq() < 1e-6) side = ctx.sideAtSite.clone();
   side.normalize();
   const nearMoon = p.length() < 1737.4 + 600;

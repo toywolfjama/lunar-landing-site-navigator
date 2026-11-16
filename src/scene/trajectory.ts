@@ -121,6 +121,13 @@ export function buildMission(inp: MissionInput) {
   };
   const offset = (w: number) => inp.east.clone().multiplyScalar((inp.spot.x * w) / 1000).add(inp.north.clone().multiplyScalar((inp.spot.y * w) / 1000));
 
+  // the orbit plane holds the site and the descent heading; its normal is the lander's fixed side axis, so every attitude
+  // change is a pitch about one axis and the lander never rolls or spins
+  const N = new THREE.Vector3().crossVectors(s, dh).normalize();
+  const pitchTo = (a: THREE.Vector3, b: THREE.Vector3, k: number) => {
+    const ang = a.angleTo(b), sgn = Math.sign(new THREE.Vector3().crossVectors(a, b).dot(N)) || 1;
+    return a.clone().applyAxisAngle(N, sgn * ang * k).normalize();
+  };
   const orient = (up: THREE.Vector3, fwd: THREE.Vector3) => {
     const y = up.clone().normalize();
     let z = fwd.clone().sub(y.clone().multiplyScalar(fwd.dot(y)));
@@ -138,7 +145,8 @@ export function buildMission(inp: MissionInput) {
       pos = bez(u);
       const e = 1e-3;
       vel = bez(Math.min(1, u + e)).sub(bez(Math.max(0, u - e))).normalize();
-      up = vel.clone();
+      // nose along the motion for most of the coast, then pitch slowly round to face backwards for the capture burn
+      up = vel.clone().applyAxisAngle(N, Math.PI * smooth((u - 0.72) / 0.28));
       // real speeds along a trans-lunar trajectory: fast off Earth, slowest near the neutral point, faster at the Moon
       spd = u < 0.85 ? 10.8 - (10.8 - 0.9) * Math.pow(u / 0.85, 0.35) : 0.9 + (2.4 - 0.9) * ((u - 0.85) / 0.15) ** 2;
       dist = 384400 * (1 - u) + 1837 * u;
@@ -148,7 +156,13 @@ export function buildMission(inp: MissionInput) {
       const h = ph <= 3 ? 100 - (ph === 3 ? 0 : 0) : 57.5 - 42.5 * Math.cos(th - thPDI);
       pos = P(th, h);
       vel = T(th);
-      up = pp.burn ? vel.clone().negate() : pos.clone().normalize();
+      // burns point the engine along the motion; between burns the lander rides upright, turning to the next burn in time
+      const radial = pos.clone().normalize(), retro = vel.clone().negate();
+      if (pp.burn) up = retro;
+      else {
+        const k = smooth(u / 0.35) * (1 - smooth((u - 0.65) / 0.35)); // 0 at both ends (retro), 1 in the middle (upright)
+        up = pitchTo(retro, radial, k);
+      }
       thr = ph === 1 ? 1 : ph === 3 ? 0.6 : 0;
       const r = R + h, a = ph === 4 ? R + 57.5 : R + 100;
       spd = Math.sqrt(MU * (2 / r - 1 / a)) + (ph === 1 ? 0.8 * (1 - u) : 0);
@@ -182,7 +196,7 @@ export function buildMission(inp: MissionInput) {
     return { pos, vel, up, thr, alt, spd, vs, dist };
   };
 
-  const fwdOf = (r: { vel: THREE.Vector3 }) => r.vel;
+  const fwdOf = (_r: { vel: THREE.Vector3 }) => N;
   const sample = (tau: number): Sample => {
     const t = Math.max(0, Math.min(TOTAL_ANIM - 1e-6, tau));
     let ph = 0;
@@ -190,9 +204,10 @@ export function buildMission(inp: MissionInput) {
     const u = (t - PHASE_START[ph]) / PHASES[ph].anim;
     const r = raw(ph, u);
     let q = orient(r.up, fwdOf(r));
-    if (ph > 0 && u < 0.25) {
+    if (ph > 0 && u < 0.4) {
+      // the phases now meet in the same attitude; this only rounds off any small step left between them
       const prev = raw(ph - 1, 1);
-      q = orient(prev.up, fwdOf(prev)).slerp(q, smooth(u / 0.25));
+      q = orient(prev.up, fwdOf(prev)).slerp(q, smooth(u / 0.4));
     }
     let remain = 0;
     for (let i = ph; i < PHASES.length - 1; i++) remain += PHASES[i].real * (i === ph ? 1 - u : 1);
@@ -216,6 +231,6 @@ export function buildMission(inp: MissionInput) {
   }
   // the points where each phase begins, for labels
   const marks = PHASES.map((p, i) => ({ name: p.short, pos: raw(i, 0).pos }));
-  return { sample, path, marks, heading: dh };
+  return { sample, path, marks, heading: dh, normal: N };
 }
 export type Mission = ReturnType<typeof buildMission>;
