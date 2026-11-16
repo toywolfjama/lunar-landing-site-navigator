@@ -176,17 +176,24 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
   };
 
   // rocks: one instanced mesh, a few hundred stones near the site and some boulders further out
-  const rockGeo = new THREE.IcosahedronGeometry(1, 1);
+  // rounded, weathered stones: a finer sphere pushed in and out by a few smooth lumps, with smooth shading
+  const rockGeo = new THREE.IcosahedronGeometry(1, 3);
   {
     const p = rockGeo.getAttribute("position") as THREE.BufferAttribute;
+    const lumps = Array.from({ length: 9 }, () => ({ d: new THREE.Vector3(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5).normalize(), k: (rnd() < 0.35 ? -1 : 1) * (0.1 + rnd() * 0.22) }));
+    const v = new THREE.Vector3();
     for (let i = 0; i < p.count; i++) {
-      const v = new THREE.Vector3().fromBufferAttribute(p, i);
-      v.multiplyScalar(0.8 + rnd() * 0.35);
+      v.fromBufferAttribute(p, i).normalize();
+      let r = 1;
+      for (const l of lumps) r += l.k * Math.pow(Math.max(0, v.dot(l.d)), 4);
+      r += 0.05 * Math.sin(7 * v.x + 3) * Math.sin(6 * v.y + 1) * Math.sin(8 * v.z + 2); // small pits and ridges
+      r -= 0.18 * Math.max(0, -v.y); // flatter underside, as if half-buried
+      v.multiplyScalar(r);
       p.setXYZ(i, v.x, v.y, v.z);
     }
     rockGeo.computeVertexNormals();
   }
-  const rockMat = new THREE.MeshStandardMaterial({ color: 0x7d7a75, roughness: 1, metalness: 0, flatShading: true });
+  const rockMat = new THREE.MeshStandardMaterial({ color: 0x5e5b57, roughness: 1, metalness: 0 });
   geos.push(rockGeo);
   mats.push(rockMat);
   const NR = 48;
@@ -205,7 +212,7 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
   const setSpot = (sx: number, sy: number) => {
     rockData.forEach((r, i) => {
       const x = sx + r.x, y = sy + r.y, sz = r.sz;
-      m4.compose(new THREE.Vector3(x, heightAt(x, y) + sz * r.sy * 0.25, -y), r.q, new THREE.Vector3(sz, sz * r.sy, sz));
+      m4.compose(new THREE.Vector3(x, heightAt(x, y) + sz * r.sy * 0.08, -y), r.q, new THREE.Vector3(sz, sz * r.sy, sz));
       rocks.setMatrixAt(i, m4);
     });
     rocks.instanceMatrix.needsUpdate = true;

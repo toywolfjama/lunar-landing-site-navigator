@@ -651,7 +651,8 @@ export function Mission({ engineer = false, onEngineer, demoReq = 0 }: { enginee
         st.sunSprite.scale.setScalar(D * 0.16); // the disc is about 0.5 deg across; the rest is glow
       }
       earthLabel.visible = !cineShot;
-      st.radio.visible = !cineShot;
+      // the radio path is for the wide view; close to the site its far end makes it flicker against the ground
+      st.radio.visible = !cineShot && camR > 40;
       pathAll.visible = pathDone.visible = !cineShot || cineShot.id === "0a";
       (st.composer as EffectComposer).render();
       labels.render(scene, camera);
