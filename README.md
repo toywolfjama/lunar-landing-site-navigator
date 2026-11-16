@@ -6,13 +6,17 @@ NASA Space Apps Challenge entry. Everything is on one page: check a landing site
 
 ## What it does
 
-- **Earth and the Moon in 3D** (not to scale), both lit by the real Sun for the chosen time. Earth is turned to its
+- **Earth and the Moon in 3D** (not to scale), both lit by the real Sun for the chosen time, with the Sun itself shown
+  in the sky along its true direction. Earth is turned to its
   real sidereal angle and the Moon to its real libration. Drag to orbit, scroll or pinch to zoom, right-drag to pan,
-  or jump to **Earth & Moon**, **Moon**, **Landing site**, **Cinematic** or **Chase**.
-- **The landing site up close:** NASA LOLA 20 m terrain around the preset site, with generated craters and ground
+  or jump to **Earth & Moon**, **Moon**, **Landing site**, **Cinematic** or **Chase**. Chase stays locked on the
+  lander and frames each phase automatically; scroll, pinch or the +/- buttons zoom in and out on top of that.
+- **The landing site up close:** NASA LOLA 20 m terrain at the four south-pole sites, with generated craters and ground
   out to 15 km. Click the ground to move the touchdown spot; turn on slope colours to see where it is safe.
-- **One preset mission** to the Shackleton Connecting Ridge (0.55° from the south pole), plus **your own landings**:
-  click anywhere on the Moon to land there, name it and save it (kept in your browser).
+- **Curated sites:** the preset mission to the Shackleton Connecting Ridge (0.55° from the south pole), three more
+  south-pole sites with LOLA terrain (Malapert Massif, Mons Mouton, the IM-2 Athena site), a planned CLPS landing
+  (IM-3, Reiner Gamma), and all 28 past soft landings (Apollo, Luna, Surveyor, Chang'e, Chandrayaan-3, SLIM, IM-1,
+  Blue Ghost...). Plus **your own landings**: click anywhere on the Moon or type coordinates, name it and save it.
 - **Three checks and a verdict** for the touchdown time and spot:
 
 | Check | Passes when | Data |
@@ -21,13 +25,19 @@ NASA Space Apps Challenge entry. Everything is on one page: check a landing site
 | Radio link to Earth | Earth is above the real terrain horizon (no relay assumed) | Ephemeris + LOLA horizon mask |
 | Safe ground | The steepest 20 m facet in the 100 m landing cell is under 10° | LOLA 20 m elevation model |
 
+- **Time to sunset and Earthset:** each check says when the Sun next sets or rises and when Earth next sets or rises
+  at the touchdown spot, against the real terrain horizon.
+- **Sky from the site:** a 360° panorama from the touchdown spot with the terrain horizon (NASA LOLA, or the smooth
+  Moon), the Sun's and Earth's paths over the next 30 days (solid where visible, dashed where hidden), and where each
+  is now.
+- **Compare:** add site and time scenarios to a table (Sun and Earth clearance above the horizon, sunlit and
+  Earth-in-view share over 30 days, next sunset/Earthset, slope, verdict). "This site, next 3 weeks" adds the same
+  spot a week, two and three weeks later, to see what a launch slip does. Click a row to load it.
 - **Land here:** a 3D lander flies the whole trip, Earth to touchdown, as a cinematic sequence of shots: trans-lunar
   coast, lunar orbit insertion, 100 km orbit, descent orbit insertion, coast to 15 km, braking burn, approach,
   terminal descent and touchdown (slow motion near the ground). Play, pause, 0.25x to 8x speed, scrub, or jump to any
   phase; altitude, speed and vertical speed are shown live. On ground steeper than 15° the lander tips over. After
   touchdown its dish turns to Earth if Earth is in view.
-- **About and judging:** how the project meets each Space Apps judging criterion, the Artemis limits used, data
-  sources, validation and limits.
 
 ## Space Apps judging criteria
 
@@ -65,14 +75,14 @@ Open `index.html` in a browser with WebGL. It is one self-contained file, needs 
 |---|---|
 | `src/physics/lunarAstronomy.ts` | Ephemeris, Earth-Moon-Sun frames, local sky, horizon masks, slope. No UI code. |
 | `src/physics/lolaData.ts` | LOLA terrain extract: elevation grids and precomputed horizon masks. |
-| `src/checks.ts` | The three landing checks for a site, touchdown cell and time. |
+| `src/checks.ts` | The three landing checks for a site, touchdown cell and time, and the next sunset/Earthset. |
+| `src/Sky.tsx` | The sky panorama: terrain horizon, Sun and Earth paths. |
 | `src/Mission.tsx` | The page: 3D scene, camera views, playback, panel and checks. |
 | `src/scene/terrain.ts` | Ground around the site: LOLA 20 m mesh plus generated surroundings. |
 | `src/scene/lander.ts` | The 3D lander: body, legs, engine, panels, dish, plume, dust and landing lights. |
 | `src/scene/trajectory.ts` | The trip from Earth to touchdown, phase by phase. |
 | `src/scene/cinema.ts` | The cinematic camera: one shot per moment of the mission. |
-| `src/landings.ts` | The preset mission and the shape of a landing site. |
-| `src/About.tsx` | Judging criteria, Artemis limits, data sources, validation and limits. |
+| `src/landings.ts` | Curated sites: the preset mission, south-pole sites, past landings and a planned CLPS target. |
 | `assets/` | NASA Moon (LRO LROC) and Earth (Blue Marble) colour maps, public domain. |
 | `build.mjs` | Inlines the bundle, styles and textures into `index.html`. |
 
@@ -92,6 +102,8 @@ bun run build
 - Earth image: NASA Visible Earth, Blue Marble, as bundled in the MIT-licensed `earth-visualization` npm package:
   https://visibleearth.nasa.gov/collection/1484/blue-marble
 - Artemis landing limits: https://ntrs.nasa.gov/citations/20250009323
+- Landing coordinates: NASA NSSDCA and the LROC team's landing-site solutions; ISRO, CNSA, JAXA, Intuitive Machines
+  and Firefly releases. The IM-3 target is approximate.
 - Libraries: three.js (MIT) and React (MIT).
 
 ## Known limits
@@ -99,8 +111,8 @@ bun run build
 - Earth and the Moon are not drawn to scale, and the trajectory is an illustrative profile with Apollo-style gates,
   not a flight-dynamics solution.
 - Slope is measured over 20 m baselines; rocks and craters smaller than that are invisible.
-- Only the preset site uses LOLA terrain. For your own landings the horizon is a smooth Moon, slope is unknown and the
-  ground shown is generated.
+- Four south-pole sites use LOLA terrain. Everywhere else, including your own landings, the horizon is a smooth Moon,
+  slope is unknown and the ground shown is generated.
 - Earth's orientation uses mean sidereal time without nutation; the radio check ignores ground-station position on
   Earth and assumes no relay.
 

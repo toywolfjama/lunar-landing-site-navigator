@@ -55,11 +55,15 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     }
     return h * (1 - smooth(APRON * 0.7, APRON, Math.max(Math.abs(x), Math.abs(y))));
   };
+  // LOLA inside the patch; outside it the patch's edge heights carry on and fade out over 4 km while the generated
+  // craters fade in, so a ridge or slope continues naturally instead of ending in a wall
   const heightAt = (x: number, y: number) => {
-    const g = gen(x, y);
-    if (!lola || Math.abs(x) > INNER || Math.abs(y) > INNER) return g;
-    const w = smooth(INNER - 160, INNER, Math.max(Math.abs(x), Math.abs(y)));
-    return (P.patchElevationAt(site, x, y) - datum) * (1 - w) + g * w;
+    if (!lola) return gen(x, y);
+    const cx = Math.max(-INNER, Math.min(INNER, x)), cy = Math.max(-INNER, Math.min(INNER, y));
+    const L = P.patchElevationAt(site, cx, cy) - datum;
+    const out = Math.hypot(x - cx, y - cy);
+    if (out === 0) return L;
+    return L * (1 - smooth(0, 4000, out)) + gen(x, y) * smooth(0, 400, out);
   };
   const normalAt = (x: number, y: number) => {
     const e = 5;
@@ -126,7 +130,7 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     return me;
   };
 
-  const inner = mesh(INNER, 20, false, () => 0, 40);
+  const inner = mesh(INNER, 20, false, () => 0, 8);
   inner.castShadow = true;
   inner.name = "ground-inner";
   // under the 20 m mesh the coarse ground is pushed down out of sight; near the edge only slightly, so no trench shows
