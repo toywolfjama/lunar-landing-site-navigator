@@ -75,7 +75,7 @@ interface Ui {
   remain: number;
 }
 
-export function Mission({ engineer = false, onEngineer }: { engineer?: boolean; onEngineer?: (v: boolean) => void }) {
+export function Mission({ engineer = false, onEngineer, demoReq = 0 }: { engineer?: boolean; onEngineer?: (v: boolean) => void; demoReq?: number }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [selId, setSelId] = useState("shackleton");
   const [customs, setCustoms] = useState<Landing[]>(loadCustoms);
@@ -949,6 +949,25 @@ export function Mission({ engineer = false, onEngineer }: { engineer?: boolean; 
     () => pins.map((p) => ({ p, a: assess(p.landing, p.t, mToCell(p.spot.x, p.spot.y)) })),
     [pins]
   );
+  // 30-second guided demo: a few captioned steps, then the landing at 4x
+  const [demoCap, setDemoCap] = useState("");
+  const demoTimers = useRef<number[]>([]);
+  const stopDemo = () => { demoTimers.current.forEach((x) => clearTimeout(x)); demoTimers.current = []; setDemoCap(""); };
+  useEffect(() => {
+    if (!demoReq) return;
+    stopDemo();
+    const at = (ms: number, fn: () => void) => demoTimers.current.push(window.setTimeout(fn, ms));
+    setDemoCap("LunaPoint: will a Moon landing spot have sunlight, a radio link to Earth and safe ground?");
+    onEngineer?.(false);
+    flyTo("moon");
+    at(4000, () => { flyTo("site"); setDemoCap("Real NASA LOLA terrain at the Shackleton ridge, near the lunar south pole"); });
+    at(9000, () => { onEngineer?.(true); setDemoCap("Go / No-Go: ten graded checks for this spot and time, from descent comms to battery and thermal"); });
+    at(15000, () => { onEngineer?.(false); pickBestRef.current(); setDemoCap("One click finds the flattest sunlit spot with Earth in view"); });
+    at(18500, () => { setSpeed(4); land(0); setDemoCap("Then a 3D lander flies the whole mission, Earth to touchdown, on that terrain"); });
+    at(30500, () => setDemoCap(""));
+    return () => demoTimers.current.forEach((x) => clearTimeout(x));
+  }, [demoReq]);
+
   // best 100 m cell at this time: under the slope limit, then most sunlight, Earth in view, flattest
   const [bestMsg, setBestMsg] = useState("");
   const pickBest = () => {
@@ -970,6 +989,8 @@ export function Mission({ engineer = false, onEngineer }: { engineer?: boolean; 
     setBestMsg(`Moved to ${Math.round(m.x)} m E, ${Math.round(m.y)} m N: ${sl.max[best].toFixed(1)}° slope, ${g.powerW > 0 ? "sunlit" : "in shadow"}, ${g.lock === "BLACKOUT" ? "no Earth in view" : "Earth in view"}.${g.lock === "BLACKOUT" ? " Earth is below the horizon from every safe cell now; try another time." : ""}`);
   };
   useEffect(() => setBestMsg(""), [sel.id, t]);
+  const pickBestRef = useRef(pickBest);
+  pickBestRef.current = pickBest;
   const pin = (dt = 0) => {
     const key = sel.id + ":" + (t + dt) + ":" + spot.x + ":" + spot.y;
     setPins((ps) => (ps.some((x) => x.key === key) ? ps : [...ps, { key, landing: { ...sel }, t: t + dt, spot: { ...spot } }].slice(-12)));
@@ -992,6 +1013,12 @@ export function Mission({ engineer = false, onEngineer }: { engineer?: boolean; 
 
   return (
     <div className={"ms" + (view === "cine" ? " cine" : "") + (engineer && view !== "cine" ? " eng-on" : "")}>
+      {demoCap && (
+        <div className="demo-cap glass" role="status">
+          <span>{demoCap}</span>
+          <button className="btn small" onClick={stopDemo}>Skip</button>
+        </div>
+      )}
       {engineer && view !== "cine" && (
         <EngineerPanel sel={sel} t={t} cell={cell} spot={spot} A={A} onTime={(ms) => { setSetMs(ms); setTimeMode("set"); }} onClose={() => onEngineer?.(false)} />
       )}

@@ -25,6 +25,7 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
 
 export default function App() {
   const [eng, setEng] = useState(false);
+  const [demo, setDemo] = useState(0);
   return (
     <div className="app">
       <header className="top">
@@ -35,12 +36,13 @@ export default function App() {
             <p>Pick a site, check it, and fly a lander there</p>
           </div>
         </div>
+        <button className="btn small demo-btn" onClick={() => setDemo((d) => d + 1)}>▶ 30-second demo</button>
         <button className="eng-toggle" role="switch" aria-checked={eng} onClick={() => setEng((v) => !v)} title="Detailed GO / NO-GO data for the chosen spot and time">
           <span className="sw" aria-hidden="true" />
           Go / No-Go
         </button>
       </header>
-      <Mission engineer={eng} onEngineer={setEng} />
+      <Mission engineer={eng} onEngineer={setEng} demoReq={demo} />
     </div>
   );
 }
