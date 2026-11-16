@@ -9,7 +9,8 @@ import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import * as P from "./physics/lunarAstronomy";
 import { LANDINGS, Landing } from "./landings";
-import { assess, siteFor, cellToM, mToCell, DEFAULT_CELL, SLOPE_LIMIT, TIP_LIMIT } from "./checks";
+import { assess, siteFor, cellToM, mToCell, DEFAULT_CELL, SLOPE_LIMIT, TIP_LIMIT, TERRAIN_IDS, fmtHours } from "./checks";
+import { Sky } from "./Sky";
 import { buildGround, Ground } from "./scene/terrain";
 import { buildLander, LanderModel } from "./scene/lander";
 import { buildMission, Mission as MissionPath, PHASES, PHASE_START, TOTAL_ANIM } from "./scene/trajectory";
@@ -89,6 +90,8 @@ export function Mission() {
   const [ui, setUi] = useState<Ui>({ tau: TOTAL_ANIM, phase: PHASES.length - 1, alt: 0, speed: 0, vs: 0, dist: 0, remain: 0 });
   const [glOk, setGlOk] = useState(true);
   const [slowMo, setSlowMo] = useState(false);
+  const [drawer, setDrawer] = useState<"sky" | "compare" | null>(() => (typeof window !== "undefined" && window.innerWidth < 900 ? null : "sky"));
+  const [pins, setPins] = useState<{ key: string; landing: Landing; t: number; spot: { x: number; y: number } }[]>([]);
   useEffect(() => {
     if (timeMode !== "now") return;
     const id = setInterval(() => setClock(Math.floor(Date.now() / 60000) * 60000), 60000);
@@ -839,20 +842,27 @@ export function Mission() {
 
   const mine = [...customs, ...(draft ? [draft] : [])];
   const n = A.now;
+  const poleSites = LANDINGS.filter((l) => l.site && TERRAIN_IDS.includes(l.site));
+  const planned = LANDINGS.filter((l) => l.kind === "future");
+  const past = LANDINGS.filter((l) => l.date && !(l.site && TERRAIN_IDS.includes(l.site)));
+  const evText = (e: { up: boolean; hours: number | null }, sun: boolean) =>
+    e.hours === null
+      ? e.up ? (sun ? "No sunset in the next 30 days" : "No Earthset in the next 30 days") : sun ? "No sunrise in the next 30 days" : "Earth does not rise in the next 30 days"
+      : (e.up ? (sun ? "Sunset in " : "Earthset in ") : sun ? "Sunrise in " : "Earthrise in ") + fmtHours(e.hours);
   const checks: { k: string; why: string; tone: "ok" | "bad" | "warn" | "na"; head: string; sub: string }[] = [
     {
       k: "Sunlight for power",
       why: "no sunlight",
       tone: A.sunOk ? "ok" : "bad",
       head: A.sunOk ? `Sun ${n.sunEl.toFixed(1)}° above the horizon` : n.sunEl > 0 ? "Sun hidden behind terrain" : `Sun ${(-n.sunEl).toFixed(1)}° below the horizon`,
-      sub: `Sunlit ${A.litPct.toFixed(0)}% of the next 30 days`,
+      sub: `${evText(A.sunEvent, true)} · sunlit ${A.litPct.toFixed(0)}% of 30 days`,
     },
     {
       k: "Radio link to Earth",
       why: "no line of sight to Earth",
       tone: A.linkOk ? "ok" : "bad",
       head: A.linkOk ? `Earth ${n.earthClearance.toFixed(1)}° above the horizon` : A.farSide ? "Earth never visible (far side)" : n.earthEl > 0 ? "Earth blocked by terrain" : "Earth below the horizon",
-      sub: `Earth in view ${A.linkPct.toFixed(0)}% of the next 30 days`,
+      sub: `${evText(A.earthEvent, false)} · in view ${A.linkPct.toFixed(0)}% of 30 days`,
     },
     {
       k: "Safe ground",
@@ -863,6 +873,24 @@ export function Mission() {
     },
   ];
   const failing = checks.filter((c) => c.tone === "bad" || c.tone === "warn").map((c) => c.why);
+  const rows = useMemo(
+    () => pins.map((p) => ({ p, a: assess(p.landing, p.t, mToCell(p.spot.x, p.spot.y)) })),
+    [pins]
+  );
+  const pin = (dt = 0) => {
+    const key = sel.id + ":" + (t + dt) + ":" + spot.x + ":" + spot.y;
+    setPins((ps) => (ps.some((x) => x.key === key) ? ps : [...ps, { key, landing: { ...sel }, t: t + dt, spot: { ...spot } }].slice(-12)));
+    setDrawer("compare");
+  };
+  const loadPin = (p: { landing: Landing; t: number; spot: { x: number; y: number } }) => {
+    if (!all.some((l) => l.id === p.landing.id)) setDraft({ ...p.landing, id: "draft" });
+    setSelId(all.some((l) => l.id === p.landing.id) ? p.landing.id : "draft");
+    setSpots((m) => ({ ...m, [p.landing.id]: p.spot }));
+    setSetMs(p.t);
+    setTimeMode("set");
+  };
+  const fmtSigned = (v: number) => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1);
+  const fmtWhen = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
   const go = failing.length === 0;
   const custom = sel.kind === "custom";
   const ph = PHASES[ui.phase];
@@ -892,13 +920,18 @@ export function Mission() {
       <aside className="ms-panel glass" aria-label="Plan a landing">
         <header>
           <h2>Plan a landing</h2>
-          <p>The preset mission flies to the Shackleton ridge. Or click anywhere on the Moon to land there.</p>
+          <p>The preset mission flies to the Shackleton ridge. Pick another site, or click anywhere on the Moon.</p>
         </header>
         <label className="fld">
           <span>Landing site</span>
           <select value={sel.id} onChange={(e) => pickSite(e.target.value)}>
-            <optgroup label="Preset mission (real NASA LOLA terrain)">
-              {LANDINGS.map((l) => (
+            <optgroup label="South-pole sites (NASA LOLA terrain)">
+              {poleSites.map((l) => (
+                <option key={l.id} value={l.id}>{l.name}{l.id === "shackleton" ? " (preset mission)" : ""}</option>
+              ))}
+            </optgroup>
+            <optgroup label="Planned landings">
+              {planned.map((l) => (
                 <option key={l.id} value={l.id}>{l.name}</option>
               ))}
             </optgroup>
@@ -910,6 +943,13 @@ export function Mission() {
                 </option>
               ))}
               <option value="__new">+ New custom landing</option>
+            </optgroup>
+            <optgroup label="Past landings">
+              {past.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name} ({l.date.slice(0, 4)})
+                </option>
+              ))}
             </optgroup>
           </select>
         </label>
@@ -993,7 +1033,71 @@ export function Mission() {
         <button className="btn land" onClick={() => land(0)}>
           ▶ Land here
         </button>
+        <div className="ms-cmp-add">
+          <button className="btn small" onClick={() => pin(0)}>+ Add to comparison</button>
+          <button className="btn small" onClick={() => { pin(0); for (const d of [7, 14, 21]) pin(d * DAY); }}>+ This site, next 3 weeks</button>
+        </div>
       </aside>
+
+      <div className={"ms-drawer" + (drawer ? " open" : "")}>
+        <div className="dr-tabs" role="tablist" aria-label="Details">
+          <button role="tab" aria-selected={drawer === "sky"} onClick={() => setDrawer(drawer === "sky" ? null : "sky")}>Sky from the site</button>
+          <button role="tab" aria-selected={drawer === "compare"} onClick={() => setDrawer(drawer === "compare" ? null : "compare")}>
+            Compare{pins.length ? ` (${pins.length})` : ""}
+          </button>
+          {drawer && <button className="dr-close" aria-label="Close details" onClick={() => setDrawer(null)}>Hide</button>}
+        </div>
+        {drawer === "sky" && <Sky A={A} t={t} />}
+        {drawer === "compare" && (
+          <div className="cmp">
+            {rows.length === 0 ? (
+              <p className="cmp-empty">Add the current site and time with “+ Add to comparison”, or “+ This site, next 3 weeks” to see how a launch slip changes things. Click a row to load it.</p>
+            ) : (
+              <table>
+                <thead>
+                  <tr>
+                    <th>Site</th>
+                    <th>Touchdown (UTC)</th>
+                    <th title="Sun centre above the real terrain horizon">Sun clear</th>
+                    <th>Sunlit 30 d</th>
+                    <th>Sun event</th>
+                    <th title="Earth centre above the real terrain horizon">Earth clear</th>
+                    <th>Earth 30 d</th>
+                    <th>Earth event</th>
+                    <th>Slope</th>
+                    <th>Verdict</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(({ p, a }) => {
+                    const ok = a.sunOk && a.linkOk && (a.slope ? a.slope.max < SLOPE_LIMIT : true);
+                    const cur = p.landing.id === sel.id && p.t === t && p.spot.x === spot.x && p.spot.y === spot.y;
+                    return (
+                      <tr key={p.key} className={cur ? "cur" : ""} onClick={() => loadPin(p)}>
+                        <td>{p.landing.name}</td>
+                        <td>{fmtWhen(p.t)}</td>
+                        <td className={a.sunOk ? "good" : "badc"}>{fmtSigned(a.now.sunEl - a.now.sunHorizon)}°</td>
+                        <td>{a.litPct.toFixed(0)}%</td>
+                        <td>{evText(a.sunEvent, true).replace(" in the next 30 days", "")}</td>
+                        <td className={a.linkOk ? "good" : "badc"}>{fmtSigned(a.now.earthClearance)}°</td>
+                        <td>{a.linkPct.toFixed(0)}%</td>
+                        <td>{evText(a.earthEvent, false).replace(" in the next 30 days", "")}</td>
+                        <td className={a.slope ? (a.slope.max < SLOPE_LIMIT ? "good" : "badc") : ""}>{a.slope ? a.slope.max.toFixed(1) + "°" : "unknown"}</td>
+                        <td className={ok ? "good" : "badc"}>{ok ? "Go" : "No-go"}</td>
+                        <td>
+                          <button className="x" aria-label="Remove" onClick={(e) => { e.stopPropagation(); setPins((ps) => ps.filter((x) => x.key !== p.key)); }}>×</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+            {rows.length > 0 && <button className="btn small" onClick={() => setPins([])}>Clear</button>}
+          </div>
+        )}
+      </div>
 
       <div className="ms-player glass" role="group" aria-label="Landing playback">
         <div className="pl-row">
