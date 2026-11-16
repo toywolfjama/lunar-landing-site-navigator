@@ -72,7 +72,7 @@ interface Ui {
   remain: number;
 }
 
-export function Mission({ onAbout }: { onAbout: () => void }) {
+export function Mission() {
   const hostRef = useRef<HTMLDivElement>(null);
   const [selId, setSelId] = useState("shackleton");
   const [customs, setCustoms] = useState<Landing[]>(loadCustoms);
@@ -115,6 +115,7 @@ export function Mission({ onAbout }: { onAbout: () => void }) {
     moveSpot: (_x: number, _y: number) => {},
     ended: () => {},
     takeCamera: () => {},
+    zoom: (_k: number) => {},
   });
   api.current.pick = (id) => setSelId(id);
   api.current.landAt = (lat, lon) => {
@@ -138,9 +139,23 @@ export function Mission({ onAbout }: { onAbout: () => void }) {
   };
   api.current.takeCamera = () => {
     const st = S.current;
+    // keep the current distance as the starting zoom, so nothing jumps
+    const smp = st.mission?.sample(st.tau);
+    const auto = smp ? st.followDist(smp) : 1;
+    const d = st.camera.position.distanceTo(st.landerHold.position);
+    st.followZoom = live.current.view === "cine" ? Math.max(0.002, Math.min(60, d / auto)) : 1;
+    if (live.current.view !== "cine") {
+      // coming from another view: start from a pleasant angle above and behind
+      const up = st.landerHold.position.clone().normalize();
+      st.camera.position.copy(st.landerHold.position).add(up.multiplyScalar(auto * 0.6)).add(st.sunDir.clone().multiplyScalar(auto * 0.8));
+    }
     st.controls.target.copy(st.landerHold.position);
-    st.userMoved = true;
+    st.fly = null;
     setView("follow");
+  };
+  api.current.zoom = (k: number) => {
+    const st = S.current;
+    st.followZoom = Math.max(0.002, Math.min(60, (st.followZoom || 1) * k));
   };
   api.current.ended = () => {
     setPlaying(false);
@@ -240,7 +255,31 @@ export function Mission({ onAbout }: { onAbout: () => void }) {
     scene.add(sun, sun.target);
     const earthshine = new THREE.DirectionalLight(0x9db8ff, 0.08);
     scene.add(earthshine, earthshine.target);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.035));
+    // a little fill so detail in shadow still reads (the real Moon has almost none)
+    scene.add(new THREE.AmbientLight(0xffffff, 0.07));
+    const fill = new THREE.HemisphereLight(0xcfd8ff, 0x1a1712, 0.12);
+    scene.add(fill);
+
+    // the Sun itself: a bright disc with a soft glow, always far beyond everything along the real Sun direction
+    const sunTex = (() => {
+      const c = document.createElement("canvas");
+      c.width = c.height = 256;
+      const x = c.getContext("2d")!;
+      const g = x.createRadialGradient(128, 128, 0, 128, 128, 128);
+      g.addColorStop(0, "rgba(255,255,255,1)");
+      g.addColorStop(0.08, "rgba(255,252,240,1)");
+      g.addColorStop(0.11, "rgba(255,236,190,0.75)");
+      g.addColorStop(0.3, "rgba(255,200,120,0.18)");
+      g.addColorStop(1, "rgba(255,170,80,0)");
+      x.fillStyle = g;
+      x.fillRect(0, 0, 256, 256);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    })();
+    const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sunTex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
+    sunSprite.renderOrder = -1;
+    scene.add(sunSprite);
 
     // labels
     const mkLabel = (text: string, cls: string) => {
@@ -293,7 +332,7 @@ export function Mission({ onAbout }: { onAbout: () => void }) {
     composer.addPass(bloom);
     composer.addPass(new OutputPass());
 
-    S.current = { composer, renderer, labels, scene, camera, controls, moon, earth, atmo, sun, earthshine, lander, landerHold, ring, pathAll, pathDone, radio, lineMats, dots, dotLayer, earthLabel, moonLabel, landerLabel, mkLabel, phaseLabels: [] as CSS2DObject[] };
+    S.current = { sunSprite, composer, renderer, labels, scene, camera, controls, moon, earth, atmo, sun, earthshine, lander, landerHold, ring, pathAll, pathDone, radio, lineMats, dots, dotLayer, earthLabel, moonLabel, landerLabel, mkLabel, phaseLabels: [] as CSS2DObject[] };
 
     const resize = () => {
       const r = host.getBoundingClientRect();
@@ -349,8 +388,35 @@ export function Mission({ onAbout }: { onAbout: () => void }) {
       }
     };
     renderer.domElement.addEventListener("pointerdown", onDown);
+    const onWheel = (e: WheelEvent) => {
+      if (live.current.view !== "follow") return;
+      e.preventDefault();
+      api.current.zoom(Math.exp(e.deltaY * 0.0015));
+    };
+    const touches = new Map<number, { x: number; y: number }>();
+    let pinch0 = 0;
+    const onTouchDown = (e: PointerEvent) => {
+      if (e.pointerType !== "touch") return;
+      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touches.size === 2) { const [a, b] = [...touches.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y); }
+    };
+    const onTouchMove = (e: PointerEvent) => {
+      if (e.pointerType !== "touch" || !touches.has(e.pointerId)) return;
+      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touches.size === 2 && pinch0 > 0 && live.current.view === "follow") {
+        const [a, b] = [...touches.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        api.current.zoom(pinch0 / d);
+        pinch0 = d;
+      }
+    };
+    const onTouchUp = (e: PointerEvent) => { touches.delete(e.pointerId); if (touches.size < 2) pinch0 = 0; };
+    renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
+    renderer.domElement.addEventListener("pointerdown", onTouchDown);
+    renderer.domElement.addEventListener("pointermove", onTouchMove);
+    renderer.domElement.addEventListener("pointerup", onTouchUp);
+    renderer.domElement.addEventListener("pointercancel", onTouchUp);
     renderer.domElement.addEventListener("pointerup", onUp);
-    controls.addEventListener("start", () => { S.current.userMoved = true; });
 
     /* ---------------- render loop ---------------- */
     let raf = 0, last = performance.now(), lastUi = 0;
@@ -416,6 +482,7 @@ export function Mission({ onAbout }: { onAbout: () => void }) {
       // camera
       const target = controls.target;
       controls.enabled = !cineShot;
+      controls.enableZoom = L.view !== "follow"; // in chase, zoom scales the automatic framing instead
       if (cineShot) {
         const sh = shot(smp, st.shotCtx as ShotContext, ts);
         camera.position.copy(sh.pos);
@@ -428,11 +495,15 @@ export function Mission({ onAbout }: { onAbout: () => void }) {
       if (cineShot) {
         // no controls update: the shot sets the camera
       } else if (L.view === "follow") {
-        const want = st.followDist(smp);
-        const d = camera.position.distanceTo(target);
-        const nd = st.userMoved ? d : Math.exp(Math.log(d) + (Math.log(want) - Math.log(d)) * Math.min(1, dt * 1.6));
-        const dir = tmp.copy(camera.position).sub(target).normalize();
-        target.lerp(smp.pos, Math.min(1, dt * 6));
+        // locked on the lander: the camera moves with it, keeps the angle you orbit to, and frames each phase
+        // automatically; scroll, pinch or the +/- buttons zoom on top of that framing
+        const shift = tmp.copy(smp.pos).sub(target);
+        target.copy(smp.pos);
+        camera.position.add(shift);
+        const want = Math.max(0.007, st.followDist(smp) * st.followZoom); // never closer than 7 m
+        const d = Math.max(1e-6, camera.position.distanceTo(target));
+        const nd = Math.exp(Math.log(d) + (Math.log(want) - Math.log(d)) * Math.min(1, dt * 3));
+        const dir = camera.position.clone().sub(target).normalize();
         camera.position.copy(target).add(dir.multiplyScalar(nd));
       } else if (st.fly) {
         const f = st.fly;
@@ -484,6 +555,12 @@ export function Mission({ onAbout }: { onAbout: () => void }) {
       for (const m of lineMats) m.resolution.set(renderer.domElement.clientWidth, renderer.domElement.clientHeight);
       if (st.ground) st.ground.group.visible = camR < 2500;
       ring.visible = !cineShot && !L.playing && camR < 30;
+      // the Sun sits 1,000,000 km out along the true Sun direction from wherever the camera is
+      if (st.sunDir) {
+        const D = 1e6;
+        st.sunSprite.position.copy(camera.position).add(st.sunDir.clone().multiplyScalar(D));
+        st.sunSprite.scale.setScalar(D * 0.16); // the disc is about 0.5 deg across; the rest is glow
+      }
       earthLabel.visible = !cineShot;
       st.radio.visible = !cineShot;
       pathAll.visible = pathDone.visible = !cineShot || cineShot.id === "0a";
@@ -496,12 +573,18 @@ export function Mission({ onAbout }: { onAbout: () => void }) {
       }
     };
     S.current.tau = TOTAL_ANIM;
+    S.current.followZoom = 1;
     raf = requestAnimationFrame(frame);
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
       renderer.domElement.removeEventListener("pointerdown", onDown);
       renderer.domElement.removeEventListener("pointerup", onUp);
+      renderer.domElement.removeEventListener("wheel", onWheel);
+      renderer.domElement.removeEventListener("pointerdown", onTouchDown);
+      renderer.domElement.removeEventListener("pointermove", onTouchMove);
+      renderer.domElement.removeEventListener("pointerup", onTouchUp);
+      renderer.domElement.removeEventListener("pointercancel", onTouchUp);
       controls.dispose();
       S.current.ground?.dispose();
       lander.dispose();
@@ -626,13 +709,15 @@ export function Mission({ onAbout }: { onAbout: () => void }) {
 
     // follow distances by phase (km)
     st.followDist = (smp: any) => {
+      // default chase framing: the lander fills a good part of the view; zoom out for context
       const ph = smp.phase, u = smp.u;
-      if (ph === 0) return 26000 + 10000 * (1 - u);
-      if (ph <= 4) return 900;
-      if (ph === 5) return Math.exp(Math.log(140) + (Math.log(9) - Math.log(140)) * u);
-      if (ph === 6) return Math.exp(Math.log(9) + (Math.log(0.25) - Math.log(9)) * u);
-      if (ph === 7) return Math.exp(Math.log(0.25) + (Math.log(0.035) - Math.log(0.25)) * u);
-      return 0.03;
+      const lg = (a: number, b: number) => Math.exp(Math.log(a) + (Math.log(b) - Math.log(a)) * u);
+      if (ph === 0) return lg(30000, 0.4);
+      if (ph <= 4) return 0.05;
+      if (ph === 5) return lg(0.06, 0.08);
+      if (ph === 6) return lg(0.08, 0.05);
+      if (ph === 7) return lg(0.05, 0.03);
+      return 0.025;
     };
 
     // phase labels along the path
@@ -677,7 +762,6 @@ export function Mission({ onAbout }: { onAbout: () => void }) {
     setView(v);
     const st = S.current;
     if (!st.camera) return;
-    st.userMoved = false;
     if (v === "follow") return;
     const cam: THREE.PerspectiveCamera = st.camera;
     const fromT = st.controls.target.clone();
@@ -701,8 +785,10 @@ export function Mission({ onAbout }: { onAbout: () => void }) {
     } else {
       toT = st.siteP.clone();
       toD = 2.6;
+      // look across the site with the Sun just inside the frame (about 25 deg off centre): side light and a visible Sun
       const horiz = sDir.clone().sub(st.up.clone().multiplyScalar(sDir.dot(st.up))).normalize();
-      toDir = st.up.clone().multiplyScalar(0.55).add(horiz.multiplyScalar(-0.85)).normalize(); // Sun behind the camera's shoulder
+      const look = horiz.applyAxisAngle(st.up, 0.3);
+      toDir = st.up.clone().multiplyScalar(0.32).add(look.multiplyScalar(-0.95)).normalize();
     }
     st.fly = { fromT, toT, fromD, toD, fromDir, toDir, t0: performance.now(), ms: reduced() ? 1 : 1600 };
   };
@@ -713,7 +799,6 @@ export function Mission({ onAbout }: { onAbout: () => void }) {
     const st = S.current;
     st.tau = from;
     st.fly = null;
-    st.userMoved = false;
     setResult(false);
     setPlaying(true);
     setView("cine");
@@ -908,10 +993,6 @@ export function Mission({ onAbout }: { onAbout: () => void }) {
         <button className="btn land" onClick={() => land(0)}>
           ▶ Land here
         </button>
-
-        <footer className="ms-judge">
-          <button onClick={onAbout}>How this meets the Space Apps judging criteria →</button>
-        </footer>
       </aside>
 
       <div className="ms-player glass" role="group" aria-label="Landing playback">
@@ -932,6 +1013,12 @@ export function Mission({ onAbout }: { onAbout: () => void }) {
             <span><em>Speed</em> {ui.speed >= 1 ? fmtNum(ui.speed, 2) + " km/s" : fmtNum(ui.speed * 1000, ui.speed < 0.01 ? 1 : 0) + " m/s"}</span>
             {ui.phase >= 4 && <span><em>Vertical</em> {fmtNum(ui.vs * 1000, Math.abs(ui.vs) < 0.01 ? 1 : 0)} m/s</span>}
           </div>
+          {view === "follow" && (
+            <div className="pl-zoom" role="group" aria-label="Chase camera zoom">
+              <button aria-label="Zoom in" onClick={() => api.current.zoom(1 / 1.6)}>+</button>
+              <button aria-label="Zoom out" onClick={() => api.current.zoom(1.6)}>−</button>
+            </div>
+          )}
           <div className="pl-speed" role="group" aria-label="Playback speed">
             {SPEEDS.map((x) => (
               <button key={x} aria-pressed={speed === x} onClick={() => setSpeed(x)}>

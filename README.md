@@ -6,9 +6,11 @@ NASA Space Apps Challenge entry. Everything is on one page: check a landing site
 
 ## What it does
 
-- **Earth and the Moon in 3D** (not to scale), both lit by the real Sun for the chosen time. Earth is turned to its
+- **Earth and the Moon in 3D** (not to scale), both lit by the real Sun for the chosen time, with the Sun itself shown
+  in the sky along its true direction. Earth is turned to its
   real sidereal angle and the Moon to its real libration. Drag to orbit, scroll or pinch to zoom, right-drag to pan,
-  or jump to **Earth & Moon**, **Moon**, **Landing site**, **Cinematic** or **Chase**.
+  or jump to **Earth & Moon**, **Moon**, **Landing site**, **Cinematic** or **Chase**. Chase stays locked on the
+  lander and frames each phase automatically; scroll, pinch or the +/- buttons zoom in and out on top of that.
 - **The landing site up close:** NASA LOLA 20 m terrain around the preset site, with generated craters and ground
   out to 15 km. Click the ground to move the touchdown spot; turn on slope colours to see where it is safe.
 - **One preset mission** to the Shackleton Connecting Ridge (0.55° from the south pole), plus **your own landings**:
@@ -26,8 +28,6 @@ NASA Space Apps Challenge entry. Everything is on one page: check a landing site
   terminal descent and touchdown (slow motion near the ground). Play, pause, 0.25x to 8x speed, scrub, or jump to any
   phase; altitude, speed and vertical speed are shown live. On ground steeper than 15° the lander tips over. After
   touchdown its dish turns to Earth if Earth is in view.
-- **About and judging:** how the project meets each Space Apps judging criterion, the Artemis limits used, data
-  sources, validation and limits.
 
 ## Space Apps judging criteria
 
@@ -72,7 +72,6 @@ Open `index.html` in a browser with WebGL. It is one self-contained file, needs 
 | `src/scene/trajectory.ts` | The trip from Earth to touchdown, phase by phase. |
 | `src/scene/cinema.ts` | The cinematic camera: one shot per moment of the mission. |
 | `src/landings.ts` | The preset mission and the shape of a landing site. |
-| `src/About.tsx` | Judging criteria, Artemis limits, data sources, validation and limits. |
 | `assets/` | NASA Moon (LRO LROC) and Earth (Blue Marble) colour maps, public domain. |
 | `build.mjs` | Inlines the bundle, styles and textures into `index.html`. |
 
