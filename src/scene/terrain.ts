@@ -241,21 +241,11 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
   bc.width = bc.height = 128;
   const bx = bc.getContext("2d")!;
   const grd = bx.createRadialGradient(64, 64, 4, 64, 64, 64);
-  grd.addColorStop(0, "rgba(255,255,255,0.55)");
-  grd.addColorStop(0.45, "rgba(255,255,255,0.32)");
+  grd.addColorStop(0, "rgba(255,255,255,0.35)");
+  grd.addColorStop(0.5, "rgba(255,255,255,0.18)");
   grd.addColorStop(1, "rgba(255,255,255,0)");
   bx.fillStyle = grd;
   bx.fillRect(0, 0, 128, 128);
-  bx.globalCompositeOperation = "destination-out";
-  for (let k = 0; k < 90; k++) {
-    const a = rnd() * Math.PI * 2;
-    bx.strokeStyle = `rgba(0,0,0,${0.15 + rnd() * 0.3})`;
-    bx.lineWidth = 0.5 + rnd() * 1.5;
-    bx.beginPath();
-    bx.moveTo(64 + Math.cos(a) * 14, 64 + Math.sin(a) * 14);
-    bx.lineTo(64 + Math.cos(a) * 64, 64 + Math.sin(a) * 64);
-    bx.stroke();
-  }
   const blastTex = new THREE.CanvasTexture(bc);
   const BS = 16, BN = 21;
   const blastGeo = new THREE.PlaneGeometry(BS * 2, BS * 2, BN - 1, BN - 1);
