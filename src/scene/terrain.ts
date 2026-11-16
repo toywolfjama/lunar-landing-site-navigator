@@ -59,7 +59,8 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
       if (d < 1) h += -0.14 * c.r * (1 - d * d) + 0.035 * c.r; // bowl
       else h += 0.035 * c.r * Math.pow(1 - (d - 1) / 0.6, 2); // rim and ejecta
     }
-    return h * (1 - smooth(APRON * 0.75, APRON, Math.max(Math.abs(x), Math.abs(y))));
+    // relief fades out on a circle, well inside the square mesh, so no square outline shows against the sphere
+    return h * (1 - smooth(APRON * 0.4, APRON * 0.8, Math.hypot(x, y)));
   };
   // LOLA inside the patch; outside it the patch's edge heights carry on and fade out over 4 km while the generated
   // craters fade in, so a ridge or slope continues naturally instead of ending in a wall
@@ -148,6 +149,21 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     const m = Math.max(Math.abs(x), Math.abs(y));
     return m < INNER - 160 ? 25 : m < INNER ? 3 : 0;
   }, 0);
+  // the outer ring of the apron dissolves into the Moon sphere (dithered alpha, no sorting), so there is no edge
+  {
+    const ag = apron.geometry as THREE.BufferGeometry;
+    const pos = ag.getAttribute("position") as THREE.BufferAttribute;
+    const c3 = ag.getAttribute("color") as THREE.BufferAttribute;
+    const c4 = new Float32Array(pos.count * 4);
+    for (let k = 0; k < pos.count; k++) {
+      const r = Math.hypot(pos.getX(k), pos.getZ(k));
+      c4.set([c3.getX(k), c3.getY(k), c3.getZ(k), 1 - smooth(APRON * 0.45, APRON * 0.92, r)], k * 4);
+    }
+    ag.setAttribute("color", new THREE.BufferAttribute(c4, 4));
+    const am = apron.material as THREE.MeshStandardMaterial;
+    am.alphaHash = true;
+    am.needsUpdate = true;
+  }
 
   apron.name = "ground-apron";
   apron.receiveShadow = false; // the shadow map only covers the site; outside it, plain shading
@@ -281,9 +297,9 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
         const g = me.geometry as THREE.BufferGeometry;
         const pos = g.getAttribute("position") as THREE.BufferAttribute;
         const base: number[] = g.userData.base;
-        for (let k = 0; k < g.userData.gridCount; k++) {
+        for (let k = 0; k < pos.count; k++) {
           w.fromBufferAttribute(pos, k).applyMatrix4(group.matrixWorld);
-          base[k] = sample(w) * (0.94 + (base[k] - 0.47) * 0.6); // the map's albedo, with a little of the old mottling
+          base[k] = sample(w); // the map's own albedo, exactly as the sphere shows it (skirt included)
         }
       }
       setSlopeColors(slopeState);
@@ -293,7 +309,8 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
       for (const m of mats) {
         if (m === blastMat) continue;
         const sm = m as THREE.MeshStandardMaterial;
-        if (sm.alphaHash !== !solid) { sm.alphaHash = !solid; sm.needsUpdate = true; }
+        const hash = !solid || sm === apron.material;
+        if (sm.alphaHash !== hash) { sm.alphaHash = hash; sm.needsUpdate = true; }
         sm.opacity = k;
       }
       group.visible = k > 0.001;
