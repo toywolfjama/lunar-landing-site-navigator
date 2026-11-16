@@ -53,7 +53,9 @@ export function addSurfaceDetail(material: THREE.Material, origin: THREE.Vector3
         // cell sizes in km: 24, 5, 1.1, 0.25, 0.06, 0.015
         float sc = 24.0;
         for (int i = 0; i < 6; i++) {
-          float w = 1.0 - smoothstep(0.02 * sc, 0.08 * sc, dFoot);
+          // fades out when the cells are under a few pixels, and when they are over ~1000 px (too big to read as
+          // detail): only about three layers cost anything in any view, so looking straight down stays fast
+          float w = (1.0 - smoothstep(0.02 * sc, 0.08 * sc, dFoot)) * (1.0 - smoothstep(300.0, 1200.0, sc / max(dFoot, 1e-7)));
           if (w > 0.0) {
             vec2 c = dCraters(vDetailP / sc, float(i) * 7.0);
             dH += c.x * sc * w;

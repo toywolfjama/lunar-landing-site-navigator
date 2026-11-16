@@ -28,6 +28,7 @@ export interface Ground {
   setSlopeColors: (on: boolean) => void;
   setSpot: (x: number, y: number) => void; // clears rocks from under the lander and centres the blast mark
   setBlast: (k: number) => void; // 0..1: the bright, swept ground the engine leaves around the touchdown point
+  setFade: (k: number) => void; // 0..1: dithered fade-in as the camera comes down, so the site ground never pops in
   setDetailOrigin: (v: THREE.Vector3) => void; // shared origin for the shader detail, so it lines up with the sphere
   dispose: () => void;
 }
@@ -292,6 +293,16 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     setSpot,
     setBlast,
     setDetailOrigin: (v: THREE.Vector3) => detail.forEach((d) => d.setOrigin(v)),
+    setFade: (k: number) => {
+      const solid = k >= 0.999;
+      for (const m of mats) {
+        if (m === blastMat) continue;
+        const sm = m as THREE.MeshStandardMaterial;
+        if (sm.alphaHash !== !solid) { sm.alphaHash = !solid; sm.needsUpdate = true; }
+        sm.opacity = k;
+      }
+      group.visible = k > 0.001;
+    },
     dispose: () => {
       geos.forEach((g) => g.dispose());
       mats.forEach((m) => m.dispose());

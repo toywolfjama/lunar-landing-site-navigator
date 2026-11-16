@@ -612,7 +612,11 @@ export function Mission({ engineer = false, onEngineer }: { engineer?: boolean; 
         o.visible = !cineShot && facing && (far || id === L.sel.id) && camR < 90000 && camR > 30;
       }
       for (const m of lineMats) m.resolution.set(renderer.domElement.clientWidth, renderer.domElement.clientHeight);
-      if (st.ground) st.ground.group.visible = camR < 2500;
+      // the site ground fades in (dithered, no sorting) between 400 and 150 km instead of appearing at once
+      if (st.ground) {
+        const k = 1 - Math.min(1, Math.max(0, (camR - 150) / 250));
+        if (Math.abs(k - (st.groundFade ?? -1)) > 0.004) { st.groundFade = k; st.ground.setFade(k); }
+      }
       // shadows only matter close to the site; skip the shadow pass everywhere else
       renderer.shadowMap.autoUpdate = camR < 40;
       ring.visible = !cineShot && !L.playing && camR < 30;
@@ -684,6 +688,7 @@ export function Mission({ engineer = false, onEngineer }: { engineer?: boolean; 
       st.scene.add(g.group);
       g.group.add(st.ring);
       st.ground = g;
+      st.groundFade = undefined;
       st.groundKey = siteKey;
       g.setSlopeColors(live.current.slopeColors);
       // only the lander casts shadows: at grazing Sun angles, 20 m terrain bumps would contradict the horizon check
