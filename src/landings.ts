@@ -2,7 +2,7 @@
    Coordinates are selenographic (deg north, deg east) from the mission teams' published landing-site solutions
    (NASA NSSDCA, LROC image team, ISRO, CNSA, JAXA, Intuitive Machines, Firefly). Several are rounded to 0.01 deg. */
 
-export type Kind = "crewed" | "robotic" | "pole";
+export type Kind = "crewed" | "robotic" | "pole" | "custom";
 
 export interface Landing {
   id: string;
@@ -15,7 +15,7 @@ export interface Landing {
   kind: Kind;
   region: string;
   note: string;
-  planner?: string; // P.SITES id when the planner already models this site
+  site?: string; // P.SITES id when the physics module already models this site
 }
 
 export const LANDINGS: Landing[] = [
@@ -34,7 +34,7 @@ export const LANDINGS: Landing[] = [
   { id: "surveyor7", name: "Surveyor 7", mission: "Surveyor 7", agency: "NASA", date: "1968-01-10", lat: -40.98, lon: -11.51, kind: "robotic",
     region: "Tycho ejecta", note: "The only Surveyor sent to the rough highlands, on the rim of the young crater Tycho." },
   { id: "apollo11", name: "Apollo 11", mission: "Apollo 11 · Tranquility Base", agency: "NASA", date: "1969-07-20", lat: 0.6741, lon: 23.4730, kind: "crewed",
-    region: "Mare Tranquillitatis", note: "Armstrong and Aldrin, the first people on the Moon. Landed long, past a boulder field, with about 25 s of fuel margin.", planner: "apollo11" },
+    region: "Mare Tranquillitatis", note: "Armstrong and Aldrin, the first people on the Moon. Landed long, past a boulder field, with about 25 s of fuel margin.", site: "apollo11" },
   { id: "apollo12", name: "Apollo 12", mission: "Apollo 12", agency: "NASA", date: "1969-11-19", lat: -3.0124, lon: -23.4216, kind: "crewed",
     region: "Oceanus Procellarum", note: "First pinpoint landing: Conrad and Bean set down within walking distance of Surveyor 3." },
   { id: "apollo14", name: "Apollo 14", mission: "Apollo 14", agency: "NASA", date: "1971-02-05", lat: -3.6453, lon: -17.4714, kind: "crewed",
@@ -64,7 +64,7 @@ export const LANDINGS: Landing[] = [
   { id: "change5", name: "Chang'e 5", mission: "Chang'e 5", agency: "CNSA", date: "2020-12-01", lat: 43.06, lon: -51.92, kind: "robotic",
     region: "Mons Rümker", note: "Returned 1.73 kg of the youngest basalts sampled so far." },
   { id: "chandrayaan3", name: "Chandrayaan-3 · Vikram", mission: "Chandrayaan-3", agency: "ISRO", date: "2023-08-23", lat: -69.373, lon: 32.319, kind: "robotic",
-    region: "Shiv Shakti point", note: "Southernmost landing until IM-1, and India's first. Pragyan rover measured sulphur in the soil.", planner: "chandrayaan3" },
+    region: "Shiv Shakti point", note: "Southernmost landing until IM-1, and India's first. Pragyan rover measured sulphur in the soil.", site: "chandrayaan3" },
   { id: "slim", name: "SLIM", mission: "SLIM", agency: "JAXA", date: "2024-01-19", lat: -13.316, lon: 25.251, kind: "robotic",
     region: "Shioli crater", note: "Vision-based navigation brought it to about 10 m of its aim point before an engine failed; it landed 55 m away, nose down." },
   { id: "im1", name: "IM-1 Odysseus", mission: "IM-1", agency: "Intuitive Machines / NASA CLPS", date: "2024-02-22", lat: -80.13, lon: 1.44, kind: "robotic",
@@ -74,16 +74,16 @@ export const LANDINGS: Landing[] = [
   { id: "blueghost", name: "Blue Ghost M1", mission: "Blue Ghost Mission 1", agency: "Firefly / NASA CLPS", date: "2025-03-02", lat: 18.56, lon: 61.81, kind: "robotic",
     region: "Mons Latreille, Mare Crisium", note: "First fully successful commercial landing: upright, and operated through a full lunar day." },
   { id: "athena", name: "IM-2 Athena", mission: "IM-2", agency: "Intuitive Machines / NASA CLPS", date: "2025-03-06", lat: -84.7906, lon: 29.1957, kind: "robotic",
-    region: "Mons Mouton", note: "Southernmost landing so far. Touched down about 250 m off target and came to rest on its side in a crater.", planner: "athena" },
+    region: "Mons Mouton", note: "Southernmost landing so far. Touched down about 250 m off target and came to rest on its side in a crater.", site: "athena" },
   { id: "shackleton", name: "Shackleton Connecting Ridge", mission: "Candidate site", agency: "Artemis III region", date: "", lat: -89.45, lon: -137.4, kind: "pole",
-    region: "Shackleton-de Gerlache ridge", note: "Narrow crest with some of the longest sunlight on the Moon. Modelled here with LOLA terrain.", planner: "shackleton" },
+    region: "Shackleton-de Gerlache ridge", note: "Narrow crest with some of the longest sunlight on the Moon. Modelled here with LOLA terrain.", site: "shackleton" },
   { id: "malapert", name: "Malapert Massif", mission: "Candidate site", agency: "Artemis III region", date: "", lat: -86.0, lon: 0.0, kind: "pole",
-    region: "Malapert Massif", note: "High nearside massif facing Earth, good for direct-to-Earth radio. Modelled here with LOLA terrain.", planner: "malapert" },
+    region: "Malapert Massif", note: "High nearside massif facing Earth, good for direct-to-Earth radio. Modelled here with LOLA terrain.", site: "malapert" },
   { id: "mouton", name: "Mons Mouton", mission: "Candidate site", agency: "Artemis III region", date: "", lat: -84.6, lon: 31.0, kind: "pole",
-    region: "Mons Mouton plateau", note: "Broad flat-topped mountain targeted by CLPS deliveries. Modelled here with LOLA terrain.", planner: "mouton" },
+    region: "Mons Mouton plateau", note: "Broad flat-topped mountain targeted by CLPS deliveries. Modelled here with LOLA terrain.", site: "mouton" },
 ];
 
 // chronological, with the not-yet-landed candidates last
 LANDINGS.sort((a, b) => (a.date || "9999").localeCompare(b.date || "9999"));
 
-export const KIND_LABEL: Record<Kind, string> = { crewed: "Crewed", robotic: "Robotic", pole: "South-pole candidate" };
+export const KIND_LABEL: Record<Kind, string> = { crewed: "Crewed", robotic: "Robotic", pole: "South-pole candidate", custom: "Your landing" };
