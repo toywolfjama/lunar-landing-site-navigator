@@ -13,6 +13,7 @@ import { assess, siteFor, cellToM, mToCell, bestCell, SLOPE_LIMIT, TIP_LIMIT, TE
 import { Sky } from "./Sky";
 import { buildGround, Ground } from "./scene/terrain";
 import { addSurfaceDetail } from "./scene/surfaceDetail";
+import { EngineerPanel } from "./Engineer";
 import { buildLander, LanderModel } from "./scene/lander";
 import { buildMission, Mission as MissionPath, PHASES, PHASE_START, TOTAL_ANIM } from "./scene/trajectory";
 import { shot, ShotContext } from "./scene/cinema";
@@ -74,7 +75,7 @@ interface Ui {
   remain: number;
 }
 
-export function Mission() {
+export function Mission({ engineer = false, onEngineer }: { engineer?: boolean; onEngineer?: (v: boolean) => void }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [selId, setSelId] = useState("shackleton");
   const [customs, setCustoms] = useState<Landing[]>(loadCustoms);
@@ -945,7 +946,10 @@ export function Mission() {
   const grad = PHASES.map((p, i) => `${p.color} ${(PHASE_START[i] / TOTAL_ANIM) * 100}% ${((PHASE_START[i] + p.anim) / TOTAL_ANIM) * 100}%`).join(", ");
 
   return (
-    <div className={"ms" + (view === "cine" ? " cine" : "")}>
+    <div className={"ms" + (view === "cine" ? " cine" : "") + (engineer && view !== "cine" ? " eng-on" : "")}>
+      {engineer && view !== "cine" && (
+        <EngineerPanel sel={sel} t={t} cell={cell} spot={spot} A={A} onTime={(ms) => { setSetMs(ms); setTimeMode("set"); }} onClose={() => onEngineer?.(false)} />
+      )}
       {view === "cine" && (
         <div className="cine-top">
           <span className="cine-title" style={{ color: ph.color }}>{ph.name}</span>
