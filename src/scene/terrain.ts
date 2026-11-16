@@ -3,9 +3,11 @@
    and rolling ground that fade into the Moon sphere. Good enough to fly over, not a survey product. */
 import * as THREE from "three";
 import * as P from "../physics/lunarAstronomy";
+import { addSurfaceDetail } from "./surfaceDetail";
 
 const INNER = 1040; // m, half-size of the 20 m mesh (the LOLA patch is +-1050 m)
-const APRON = 15000; // m, half-size of the generated ground
+const APRON = 30000; // m, half-size of the generated ground
+const PAD = 170; // m, half-size of the fine 2 m mesh around the site, with small craters and rocks
 const R_M = P.R_MOON_KM * 1000;
 
 function rng(seed: number) {
@@ -24,6 +26,9 @@ export interface Ground {
   normalAt: (x: number, y: number) => THREE.Vector3; // local frame
   lola: boolean;
   setSlopeColors: (on: boolean) => void;
+  setSpot: (x: number, y: number) => void; // clears rocks from under the lander and centres the blast mark
+  setBlast: (k: number) => void; // 0..1: the bright, swept ground the engine leaves around the touchdown point
+  setDetailOrigin: (v: THREE.Vector3) => void; // shared origin for the shader detail, so it lines up with the sphere
   dispose: () => void;
 }
 
@@ -41,7 +46,7 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
     return (g(xi, yi) * (1 - sx) + g(xi + 1, yi) * sx) * (1 - sy) + (g(xi, yi + 1) * (1 - sx) + g(xi + 1, yi + 1) * sx) * sy;
   };
-  const craters = Array.from({ length: 70 }, () => {
+  const craters = Array.from({ length: 220 }, () => {
     const r = 40 + Math.pow(rnd(), 2.2) * 1800;
     return { x: (rnd() * 2 - 1) * APRON, y: (rnd() * 2 - 1) * APRON, r };
   });
@@ -53,11 +58,28 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
       if (d < 1) h += -0.14 * c.r * (1 - d * d) + 0.035 * c.r; // bowl
       else h += 0.035 * c.r * Math.pow(1 - (d - 1) / 0.6, 2); // rim and ejecta
     }
-    return h * (1 - smooth(APRON * 0.7, APRON, Math.max(Math.abs(x), Math.abs(y))));
+    return h * (1 - smooth(APRON * 0.75, APRON, Math.max(Math.abs(x), Math.abs(y))));
+  };
+  // metre-scale detail near the site: small fresh craters and lumpy regolith, gone by the edge of the fine mesh
+  const small = Array.from({ length: 320 }, () => {
+    const r = 0.8 + Math.pow(rnd(), 2.8) * 16;
+    return { x: (rnd() * 2 - 1) * PAD, y: (rnd() * 2 - 1) * PAD, r };
+  });
+  const fine = (x: number, y: number) => {
+    const fade = 1 - smooth(PAD * 0.7, PAD * 0.95, Math.max(Math.abs(x), Math.abs(y)));
+    if (fade <= 0) return 0;
+    let h = vnoise(x / 9 + 11, y / 9 + 2) * 0.35 + vnoise(x / 3 + 5, y / 3 + 8) * 0.08;
+    for (const c of small) {
+      const d = Math.hypot(x - c.x, y - c.y) / c.r;
+      if (d > 1.5) continue;
+      if (d < 1) h += -0.16 * c.r * (1 - d * d) + 0.03 * c.r;
+      else h += 0.03 * c.r * Math.pow(1 - (d - 1) / 0.5, 2);
+    }
+    return h * fade;
   };
   // LOLA inside the patch; outside it the patch's edge heights carry on and fade out over 4 km while the generated
   // craters fade in, so a ridge or slope continues naturally instead of ending in a wall
-  const heightAt = (x: number, y: number) => {
+  const coarse = (x: number, y: number) => {
     if (!lola) return gen(x, y);
     const cx = Math.max(-INNER, Math.min(INNER, x)), cy = Math.max(-INNER, Math.min(INNER, y));
     const L = P.patchElevationAt(site, cx, cy) - datum;
@@ -65,14 +87,17 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     if (out === 0) return L;
     return L * (1 - smooth(0, 4000, out)) + gen(x, y) * smooth(0, 400, out);
   };
+  const heightAt = (x: number, y: number) => coarse(x, y) + fine(x, y);
+  // the slope a lander feels comes from the measured ground, not the decorative small craters
   const normalAt = (x: number, y: number) => {
     const e = 5;
-    const dx = (heightAt(x + e, y) - heightAt(x - e, y)) / (2 * e);
-    const dy = (heightAt(x, y + e) - heightAt(x, y - e)) / (2 * e);
+    const dx = (coarse(x + e, y) - coarse(x - e, y)) / (2 * e);
+    const dy = (coarse(x, y + e) - coarse(x, y - e)) / (2 * e);
     return new THREE.Vector3(-dx, 1, dy).normalize(); // local z is south
   };
 
   const group = new THREE.Group();
+  const detail: { setOrigin: (v: THREE.Vector3) => void }[] = [];
   const mats: THREE.Material[] = [];
   const geos: THREE.BufferGeometry[] = [];
 
@@ -122,6 +147,7 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     g.userData.base = base;
     g.userData.gridCount = n * n;
     const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
+    detail.push(addSurfaceDetail(m, new THREE.Vector3(), 1.6));
     const me = new THREE.Mesh(g, m);
     me.receiveShadow = true;
     geos.push(g);
@@ -130,20 +156,24 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     return me;
   };
 
-  const inner = mesh(INNER, 20, false, () => 0, 8);
+  const pad = mesh(PAD, 2, false, () => 0, 3);
+  pad.name = "ground-pad";
+  const inner = mesh(INNER, 20, false, (x, y) => (Math.max(Math.abs(x), Math.abs(y)) < PAD - 25 ? 3 : 0), 8);
   inner.castShadow = true;
   inner.name = "ground-inner";
   // under the 20 m mesh the coarse ground is pushed down out of sight; near the edge only slightly, so no trench shows
-  const apron = mesh(APRON, 150, true, (x, y) => {
+  const apron = mesh(APRON, 250, true, (x, y) => {
     const m = Math.max(Math.abs(x), Math.abs(y));
     return m < INNER - 160 ? 25 : m < INNER ? 3 : 0;
   }, 0);
+
   apron.name = "ground-apron";
   apron.receiveShadow = false; // the shadow map only covers the site; outside it, plain shading
 
   // slope colours on the 20 m mesh: green under 10 deg, amber to 15 deg, red above (LOLA sites only)
-  const setSlopeColors = (on: boolean) => {
-    const g = inner.geometry as THREE.BufferGeometry;
+  const setSlopeColors = (on: boolean) => { for (const me of [inner, pad]) slopeOn(me, on); };
+  const slopeOn = (me: THREE.Mesh, on: boolean) => {
+    const g = me.geometry as THREE.BufferGeometry;
     const pos = g.getAttribute("position") as THREE.BufferAttribute;
     const col = g.getAttribute("color") as THREE.BufferAttribute;
     const base: number[] = g.userData.base;
@@ -162,6 +192,92 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     col.needsUpdate = true;
   };
 
+  // rocks: one instanced mesh, a few hundred stones near the site and some boulders further out
+  const rockGeo = new THREE.IcosahedronGeometry(1, 1);
+  {
+    const p = rockGeo.getAttribute("position") as THREE.BufferAttribute;
+    for (let i = 0; i < p.count; i++) {
+      const v = new THREE.Vector3().fromBufferAttribute(p, i);
+      v.multiplyScalar(0.8 + rnd() * 0.35);
+      p.setXYZ(i, v.x, v.y, v.z);
+    }
+    rockGeo.computeVertexNormals();
+  }
+  const rockMat = new THREE.MeshStandardMaterial({ color: 0x8d8a84, roughness: 0.95, metalness: 0, flatShading: true });
+  geos.push(rockGeo);
+  mats.push(rockMat);
+  const NR = 900;
+  const rocks = new THREE.InstancedMesh(rockGeo, rockMat, NR);
+  rocks.castShadow = true;
+  rocks.receiveShadow = true;
+  rocks.name = "rocks";
+  const rockData = Array.from({ length: NR }, (_, i) => {
+    const far = i > 780;
+    const a = rnd() * Math.PI * 2, d = far ? 150 + rnd() * 850 : Math.pow(rnd(), 0.8) * 165;
+    const sz = far ? 0.8 + Math.pow(rnd(), 3) * 3 : 0.1 + Math.pow(rnd(), 3) * 1.3;
+    return { x: Math.cos(a) * d, y: Math.sin(a) * d, sz, sy: 0.45 + rnd() * 0.4, q: new THREE.Quaternion().setFromEuler(new THREE.Euler(rnd() * 6, rnd() * 6, rnd() * 6)) };
+  });
+  group.add(rocks);
+  const m4 = new THREE.Matrix4();
+  const setSpot = (sx: number, sy: number) => {
+    rockData.forEach((r, i) => {
+      const clear = Math.hypot(r.x - sx, r.y - sy) < 6 + r.sz * 2;
+      const sz = clear ? 0 : r.sz;
+      m4.compose(new THREE.Vector3(r.x, heightAt(r.x, r.y) + sz * r.sy * 0.35, -r.y), r.q, new THREE.Vector3(sz, sz * r.sy, sz));
+      rocks.setMatrixAt(i, m4);
+    });
+    rocks.instanceMatrix.needsUpdate = true;
+    // blast mark: a small draped grid around the spot
+    const bp = blastGeo.getAttribute("position") as THREE.BufferAttribute;
+    for (let i = 0; i < bp.count; i++) {
+      const lx = blastBase[i * 2], ly = blastBase[i * 2 + 1];
+      bp.setXYZ(i, sx + lx, heightAt(sx + lx, sy + ly) + 0.06, -(sy + ly));
+    }
+    bp.needsUpdate = true;
+    blastGeo.computeBoundingSphere();
+  };
+  // the blast mark: brighter, swept-clean ground with faint radial streaks (soft canvas texture, additive-free)
+  const bc = document.createElement("canvas");
+  bc.width = bc.height = 128;
+  const bx = bc.getContext("2d")!;
+  const grd = bx.createRadialGradient(64, 64, 4, 64, 64, 64);
+  grd.addColorStop(0, "rgba(255,255,255,0.55)");
+  grd.addColorStop(0.45, "rgba(255,255,255,0.32)");
+  grd.addColorStop(1, "rgba(255,255,255,0)");
+  bx.fillStyle = grd;
+  bx.fillRect(0, 0, 128, 128);
+  bx.globalCompositeOperation = "destination-out";
+  for (let k = 0; k < 90; k++) {
+    const a = rnd() * Math.PI * 2;
+    bx.strokeStyle = `rgba(0,0,0,${0.15 + rnd() * 0.3})`;
+    bx.lineWidth = 0.5 + rnd() * 1.5;
+    bx.beginPath();
+    bx.moveTo(64 + Math.cos(a) * 14, 64 + Math.sin(a) * 14);
+    bx.lineTo(64 + Math.cos(a) * 64, 64 + Math.sin(a) * 64);
+    bx.stroke();
+  }
+  const blastTex = new THREE.CanvasTexture(bc);
+  const BS = 16, BN = 21;
+  const blastGeo = new THREE.PlaneGeometry(BS * 2, BS * 2, BN - 1, BN - 1);
+  const blastBase: number[] = [];
+  {
+    const p = blastGeo.getAttribute("position") as THREE.BufferAttribute;
+    for (let i = 0; i < p.count; i++) blastBase.push(p.getX(i), p.getY(i));
+  }
+  const blastMat = new THREE.MeshStandardMaterial({ color: 0xd9d3c7, map: blastTex, transparent: true, opacity: 0, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -2 });
+  const blast = new THREE.Mesh(blastGeo, blastMat);
+  blast.receiveShadow = true;
+  blast.visible = false;
+  blast.renderOrder = 1;
+  group.add(blast);
+  geos.push(blastGeo);
+  mats.push(blastMat);
+  const setBlast = (k: number) => {
+    blastMat.opacity = 0.6 * Math.max(0, Math.min(1, k));
+    blast.visible = k > 0.01;
+  };
+  setSpot(0, 0);
+
   group.scale.setScalar(0.001); // metres -> km
   return {
     group,
@@ -169,9 +285,13 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     normalAt,
     lola,
     setSlopeColors,
+    setSpot,
+    setBlast,
+    setDetailOrigin: (v: THREE.Vector3) => detail.forEach((d) => d.setOrigin(v)),
     dispose: () => {
       geos.forEach((g) => g.dispose());
       mats.forEach((m) => m.dispose());
+      blastTex.dispose();
     },
   };
 }

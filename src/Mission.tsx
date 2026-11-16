@@ -12,6 +12,7 @@ import { LANDINGS, Landing } from "./landings";
 import { assess, siteFor, cellToM, mToCell, bestCell, SLOPE_LIMIT, TIP_LIMIT, TERRAIN_IDS, fmtHours } from "./checks";
 import { Sky } from "./Sky";
 import { buildGround, Ground } from "./scene/terrain";
+import { addSurfaceDetail } from "./scene/surfaceDetail";
 import { buildLander, LanderModel } from "./scene/lander";
 import { buildMission, Mission as MissionPath, PHASES, PHASE_START, TOTAL_ANIM } from "./scene/trajectory";
 import { shot, ShotContext } from "./scene/cinema";
@@ -219,7 +220,9 @@ export function Mission() {
     const earthTex = loader.load((globalThis as any).EARTH_TEX || "assets/earth_bluemarble_2k.jpg");
     moonTex.colorSpace = earthTex.colorSpace = THREE.SRGBColorSpace;
     moonTex.anisotropy = earthTex.anisotropy = 8;
-    const moon = new THREE.Mesh(new THREE.SphereGeometry(1, 192, 96), new THREE.MeshStandardMaterial({ map: moonTex, roughness: 1, metalness: 0 }));
+    const moonMat = new THREE.MeshStandardMaterial({ map: moonTex, roughness: 1, metalness: 0 });
+    const moonDetail = addSurfaceDetail(moonMat, new THREE.Vector3());
+    const moon = new THREE.Mesh(new THREE.SphereGeometry(1, 256, 128), moonMat);
     moon.name = "moon";
     moon.receiveShadow = false;
     scene.add(moon);
@@ -338,7 +341,7 @@ export function Mission() {
     composer.addPass(bloom);
     composer.addPass(new OutputPass());
 
-    S.current = { sunSprite, composer, renderer, labels, scene, camera, controls, moon, earth, atmo, sun, earthshine, lander, landerHold, ring, pathAll, pathDone, radio, lineMats, dots, dotLayer, earthLabel, moonLabel, landerLabel, mkLabel, phaseLabels: [] as CSS2DObject[] };
+    S.current = { moonDetail, sunSprite, composer, renderer, labels, scene, camera, controls, moon, earth, atmo, sun, earthshine, lander, landerHold, ring, pathAll, pathDone, radio, lineMats, dots, dotLayer, earthLabel, moonLabel, landerLabel, mkLabel, phaseLabels: [] as CSS2DObject[] };
 
     const resize = () => {
       const r = host.getBoundingClientRect();
@@ -482,6 +485,8 @@ export function Mission() {
       }
       lander.setThrottle(st.tau >= TOTAL_ANIM ? 0 : smp.throttle, ts);
       lander.setDust(smp.altKm * 1000, smp.throttle, ts);
+      // the engine sweeps the ground bright in the last few metres; it stays once landed
+      if (st.ground) st.ground.setBlast(st.tau >= TOTAL_ANIM - 0.01 || smp.phase === PHASES.length - 1 ? 1 : smp.phase === PHASES.length - 2 ? Math.max(0, 1 - (smp.altKm * 1000) / 25) : 0);
       lander.setLamps(st.tau >= TOTAL_ANIM - 0.01 ? 1e9 : smp.altKm * 1000);
       // keep a sharp shadow under the lander while it is near the site
       const nearPad = smp.pos.distanceTo(st.siteP) < 4;
@@ -662,10 +667,13 @@ export function Mission() {
       st.groundKey = siteKey;
       g.setSlopeColors(live.current.slopeColors);
       // only the lander casts shadows: at grazing Sun angles, 20 m terrain bumps would contradict the horizon check
-      g.group.traverse((o: any) => { if (o.isMesh) o.castShadow = false; });
+      g.group.traverse((o: any) => { if (o.isMesh && o.name !== "rocks") o.castShadow = false; });
+      g.setDetailOrigin(st.siteP);
+      st.moonDetail.setOrigin(st.siteP);
     }
     const g: Ground = st.ground;
     st.ring.position.set(spot.x, g.heightAt(spot.x, spot.y) + 0.4, -spot.y);
+    g.setSpot(spot.x, spot.y);
     (st.ring.material as THREE.MeshBasicMaterial).color.set(A.slope ? (A.slope.max < SLOPE_LIMIT ? 0x4ab064 : A.slope.max < TIP_LIMIT ? 0xf5a524 : 0xe5484d) : 0xf5f5f7);
 
     // Earth: direction from the Moon is real, distance and size are not; turned to its real rotation
@@ -712,7 +720,8 @@ export function Mission() {
     // ground normal at the spot, and the axis it would tip about
     const nl = g.normalAt(spot.x, spot.y);
     const nW = nl.clone().applyQuaternion(g.group.quaternion).normalize();
-    const fwd = mission.heading.clone();
+    // same side axis as in flight (the orbit normal), so settling onto the ground never turns the lander round
+    const fwd = mission.normal.clone();
     const zz = fwd.clone().sub(nW.clone().multiplyScalar(fwd.dot(nW))).normalize();
     const xx = new THREE.Vector3().crossVectors(nW, zz);
     st.groundQuat = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(xx, nW, zz));

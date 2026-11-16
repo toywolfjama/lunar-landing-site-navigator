@@ -1,6 +1,7 @@
 /* A small robotic lander in the style of the current commercial ones (about 4 m tall, 4.4 m across the feet).
    Built in metres with +y up and the origin on the plane of the footpads, so placing it on the ground is one step. */
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
 export interface LanderModel {
   group: THREE.Group;
@@ -42,11 +43,12 @@ export function buildLander(): LanderModel {
   const crinkle = new THREE.CanvasTexture(cv);
   crinkle.wrapS = crinkle.wrapT = THREE.RepeatWrapping;
   crinkle.repeat.set(2, 1);
-  const gold = mat(new THREE.MeshStandardMaterial({ color: 0xc89b2c, metalness: 0.9, roughness: 0.3, flatShading: true, bumpMap: crinkle, bumpScale: 2.5 }));
+  const gold = mat(new THREE.MeshStandardMaterial({ color: 0xc89b2c, metalness: 0.85, roughness: 0.42, flatShading: true, bumpMap: crinkle, bumpScale: 2.5 }));
   const silver = mat(new THREE.MeshStandardMaterial({ color: 0xd8d8dc, metalness: 0.75, roughness: 0.3 }));
   const dark = mat(new THREE.MeshStandardMaterial({ color: 0x2a2a2e, metalness: 0.6, roughness: 0.5 }));
   const white = mat(new THREE.MeshStandardMaterial({ color: 0xe9e9ec, metalness: 0.1, roughness: 0.55 }));
   const cell = mat(new THREE.MeshStandardMaterial({ color: 0x14254a, metalness: 0.5, roughness: 0.25, emissive: 0x050a18 }));
+  const radiator = mat(new THREE.MeshStandardMaterial({ color: 0xb9bcc2, metalness: 0.3, roughness: 0.6 }));
   const strut = mat(new THREE.MeshStandardMaterial({ color: 0xb8b8bd, metalness: 0.85, roughness: 0.35 }));
 
   const add = (g: THREE.BufferGeometry, m: THREE.Material, x = 0, y = 0, z = 0) => {
@@ -72,6 +74,39 @@ export function buildLander(): LanderModel {
     const frame = add(new THREE.BoxGeometry(0.03, 1.32, 1.07), silver, s * 1.205, 1.95, 0);
     frame.castShadow = false;
   }
+  // foil seams down each corner of the octagon, and a silver radiator panel on the two faces without solar cells
+  for (let k = 0; k < 8; k++) {
+    const a = (k * Math.PI) / 4 + Math.PI / 8;
+    const seam = add(new THREE.BoxGeometry(0.035, 1.5, 0.05), dark, Math.cos(a) * 1.3, 1.95, Math.sin(a) * 1.3);
+    seam.rotation.y = -a;
+  }
+  for (const sz of [1, -1]) {
+    add(new THREE.BoxGeometry(0.95, 1.05, 0.04), radiator, 0, 1.95, sz * 1.23);
+    for (let i = 0; i < 6; i++) add(new THREE.BoxGeometry(0.9, 0.018, 0.02), silver, 0, 1.5 + i * 0.18, sz * 1.255);
+  }
+  // solar cell grid lines
+  for (const sx of [1, -1])
+    for (let i = 1; i < 4; i++) {
+      add(new THREE.BoxGeometry(0.012, 1.25, 0.012), silver, sx * 1.25, 1.95, -0.5 + i * 0.25);
+      add(new THREE.BoxGeometry(0.012, 0.012, 1.0), silver, sx * 1.25, 1.33 + i * 0.31, 0);
+    }
+  // engine mount: thrust cone, gimbal ring and feed lines from the tanks
+  add(new THREE.CylinderGeometry(0.3, 0.55, 0.22, 16), dark, 0, 1.0);
+  const ring = add(new THREE.TorusGeometry(0.22, 0.03, 8, 20), silver, 0, 1.08);
+  ring.rotation.x = Math.PI / 2;
+  for (const sx of [1, -1]) {
+    const pipe = add(new THREE.CylinderGeometry(0.025, 0.025, 0.5, 8), strut, sx * 0.35, 1.15, sx * 0.12);
+    pipe.rotation.z = sx * 0.9;
+  }
+  // a retroreflector array and two whip antennas on the top deck
+  add(new THREE.BoxGeometry(0.3, 0.04, 0.3), silver, 0.8, 2.82, -0.5);
+  for (let i = 0; i < 9; i++) add(new THREE.CylinderGeometry(0.035, 0.035, 0.03, 8), dark, 0.7 + (i % 3) * 0.1, 2.855, -0.6 + Math.floor(i / 3) * 0.1);
+  for (const sx of [1, -1]) {
+    const w = add(new THREE.CylinderGeometry(0.008, 0.012, 0.9, 5), strut, sx * 0.95, 3.25, sx * -0.55);
+    w.rotation.z = sx * 0.25;
+  }
+  // tank supports
+  for (const [tx, tz] of [[0.55, 0.2], [-0.55, -0.2]]) add(new THREE.CylinderGeometry(0.3, 0.36, 0.14, 12, 1, true), strut, tx, 2.84, tz);
   // main engine
   const bell = new THREE.LatheGeometry(
     Array.from({ length: 12 }, (_, i) => {
@@ -242,6 +277,29 @@ export function buildLander(): LanderModel {
     }
     dustGeo.getAttribute("position").needsUpdate = true;
   };
+  // merge every fixed part that shares a material into one mesh: about 150 parts become about 8 draw calls
+  {
+    const fixed = group.children.filter((o) => (o as THREE.Mesh).isMesh && !strobes.includes(o as THREE.Mesh) && o !== dust) as THREE.Mesh[];
+    const byMat = new Map<THREE.Material, THREE.BufferGeometry[]>();
+    for (const me of fixed) {
+      me.updateMatrix();
+      let g = me.geometry.clone().applyMatrix4(me.matrix);
+      if (g.index) g = g.toNonIndexed();
+      for (const k of Object.keys(g.attributes)) if (!["position", "normal", "uv"].includes(k)) g.deleteAttribute(k);
+      const m = me.material as THREE.Material;
+      if (!byMat.has(m)) byMat.set(m, []);
+      byMat.get(m)!.push(g);
+      group.remove(me);
+    }
+    for (const [m, gs] of byMat) {
+      const merged = mergeGeometries(gs, false);
+      gs.forEach((g) => g.dispose());
+      if (!merged) continue;
+      const me = new THREE.Mesh(keep(merged), m);
+      me.castShadow = me.receiveShadow = true;
+      group.add(me);
+    }
+  }
   let rcsGlow = 0;
   const setRcs = (rate: number, timeS: number) => {
     // short bursts while the lander slews; brighter the faster it turns
