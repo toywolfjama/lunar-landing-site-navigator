@@ -201,8 +201,8 @@ export function LanderGame(props: {
       const Y = (y: number) => H * 0.42 - (y - camY) * sc;
 
       const sky = ctx.createLinearGradient(0, 0, 0, H);
-      sky.addColorStop(0, "#02030a");
-      sky.addColorStop(1, "#0a1020");
+      sky.addColorStop(0, "#020203");
+      sky.addColorStop(1, "#0A0A0C");
       ctx.fillStyle = sky;
       ctx.fillRect(0, 0, W, H);
       for (const st of stars) {
@@ -322,7 +322,7 @@ export function LanderGame(props: {
       ctx.fill();
       ctx.fillStyle = "#e2e8f0";
       ctx.fillRect(-L * 0.2, -L * 0.62, L * 0.4, L * 0.22);
-      ctx.fillStyle = "#555A8C";
+      ctx.fillStyle = "#5A5A60";
       ctx.fillRect(-L * 0.16, L * 0.3, L * 0.32, L * 0.16);
       ctx.restore();
 
@@ -360,7 +360,7 @@ export function LanderGame(props: {
           <span className="fuel">
             FUEL
             <i>
-              <em style={{ width: hud.fuel * 100 + "%", background: hud.fuel < 0.2 ? "#FF5C7A" : "#4FD1E8" }} />
+              <em style={{ width: hud.fuel * 100 + "%", background: hud.fuel < 0.2 ? "#E5484D" : "#6096E6" }} />
             </i>
           </span>
         </div>

@@ -3,6 +3,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import * as P from "./physics/lunarAstronomy";
 import { LanderGame, LIMITS } from "./Lander";
 import { STR, UI, PROV, Lang } from "./i18n";
+import { MoonGlobe } from "./MoonGlobe";
+import { Rubric, RubricTarget } from "./Rubric";
+import type { Landing } from "./landings";
 
 const LangCtx = React.createContext<Lang>("en");
 const trFor = (lang: Lang) => (text: string) => (lang === "en" ? text : UI[lang][text] ?? text);
@@ -20,16 +23,16 @@ const dec = (v: string) => (v[0] === "n" ? -parseInt(v.slice(1), 10) : parseInt(
 
 const DAY = 86400000;
 const C = {
-  amber: "#FFB547",
-  gold: "#FFE08A",
-  cyan: "#4FD1E8",
-  blue: "#6C8CFF",
-  crimson: "#FF5C7A",
-  slate: "#3A3F66",
-  line: "#23264F",
-  dim: "#A5A8CF",
-  faint: "#6E7199",
-  text: "#ECEBFF",
+  amber: "#F5A524",
+  gold: "#FFCC66",
+  cyan: "#6096E6",
+  blue: "#8CB9F5",
+  crimson: "#E5484D",
+  slate: "#3A3A3E",
+  line: "#2A2A2D",
+  dim: "#A3A3A8",
+  faint: "#6E6E73",
+  text: "#F5F5F7",
 };
 
 const sgn = (x: number, d = 2) => (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(d);
@@ -59,7 +62,7 @@ const reducedMotion = () =>
 
 type Mode = "engineer" | "explorer";
 type Overlay = "sun" | "earth" | "month" | "slope" | "none";
-const GREEN = "#5EE6A8";
+const GREEN = "#4AB064";
 type Cell = { ix: number; iy: number };
 
 /* ------------------------------------------------------------------ */
@@ -233,7 +236,7 @@ function NudgeMap(props: {
     for (let iy = 0; iy < P.GRID_N; iy++)
       for (let ix = 0; ix < P.GRID_N; ix++) {
         const i = iy * P.GRID_N + ix;
-        let fill = "#05060F";
+        let fill = "#050505";
         let op = 0;
         if (overlay === "sun") {
           const f = grid[i].sunFrac;
@@ -320,9 +323,9 @@ function NudgeMap(props: {
         </circle>
         <circle cx={cx} cy={cy} r={0.52} fill="none" stroke="#fff" strokeWidth={0.13} />
         <circle cx={cx} cy={cy} r={0.12} fill="#fff" />
-        <g fontSize={0.62} fontFamily="IBM Plex Mono, monospace" fill="#ECEBFF">
+        <g fontSize={0.62} fontFamily="IBM Plex Mono, monospace" fill="#F5F5F7">
           <text x={10.5} y={0.8} textAnchor="middle">N</text>
-          <line x1={0.6} y1={20.3} x2={5.6} y2={20.3} stroke="#ECEBFF" strokeWidth={0.07} />
+          <line x1={0.6} y1={20.3} x2={5.6} y2={20.3} stroke="#F5F5F7" strokeWidth={0.07} />
           <text x={0.6} y={19.9}>500 m</text>
           {!props.site.terrain && (
             <text x={10.5} y={8} textAnchor="middle" fontSize={0.72}>
@@ -456,17 +459,17 @@ function Panorama({ profile, timeline, now }: { profile: Float32Array; timeline:
           <stop offset="1" stopColor="#FFB547" stopOpacity="0" />
         </radialGradient>
         <linearGradient id="ter" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0" stopColor="#2B2F5A" />
-          <stop offset="1" stopColor="#0C0D22" />
+          <stop offset="0" stopColor="#2C2C2E" />
+          <stop offset="1" stopColor="#0C0C0E" />
         </linearGradient>
         <clipPath id="plot">
           <rect x={L} y={T} width={W - L - R} height={H - T - B} />
         </clipPath>
       </defs>
-      <rect x={L} y={T} width={W - L - R} height={H - T - B} fill="#070818" />
+      <rect x={L} y={T} width={W - L - R} height={H - T - B} fill="#070708" />
       {g.ticks.map((e) => (
         <g key={e}>
-          <line x1={L} x2={W - R} y1={g.Y(e)} y2={g.Y(e)} stroke={e === 0 ? "#4A4F85" : "#1A1C40"} strokeWidth={1} />
+          <line x1={L} x2={W - R} y1={g.Y(e)} y2={g.Y(e)} stroke={e === 0 ? "#4A4A50" : "#1C1C1E"} strokeWidth={1} />
           <text x={L - 5} y={g.Y(e) + 3} textAnchor="end">{e}°</text>
         </g>
       ))}
@@ -482,7 +485,7 @@ function Panorama({ profile, timeline, now }: { profile: Float32Array; timeline:
         )}
         {sunLit && <circle cx={g.X(now.sunAz)} cy={g.Y(now.sunEl)} r={sunR * 2.4} fill="url(#sunHalo)" />}
         {sunLit && <circle cx={g.X(now.sunAz)} cy={g.Y(now.sunEl)} r={sunR} fill="url(#sunCore)" />}
-        <path d={g.terrain} fill="url(#ter)" stroke="#9AA0D8" strokeWidth={1.2} strokeLinejoin="round" />
+        <path d={g.terrain} fill="url(#ter)" stroke="#A0A0A8" strokeWidth={1.2} strokeLinejoin="round" />
         <path d={g.sunHidden} fill="none" stroke={C.faint} strokeWidth={1} strokeDasharray="2 4" />
         {!sunLit && (
           <circle cx={g.X(now.sunAz)} cy={g.Y(now.sunEl)} r={sunR + 2} fill="none" stroke={C.amber} strokeWidth={1.4} strokeDasharray="3 3" />
@@ -596,8 +599,8 @@ function EarthReticle({ profile, timeline, now }: { profile: Float32Array; timel
       <svg viewBox={`0 0 ${S} ${S}`} role="img" aria-label="Earth position against the local ridge line, with its monthly libration path">
         {g.grid.map((d) => (
           <g key={d}>
-            <line x1={S / 2 + d * g.k} x2={S / 2 + d * g.k} y1={0} y2={S} stroke="#1A1C40" />
-            <line y1={S / 2 - d * g.k} y2={S / 2 - d * g.k} x1={0} x2={S} stroke="#1A1C40" />
+            <line x1={S / 2 + d * g.k} x2={S / 2 + d * g.k} y1={0} y2={S} stroke="#1C1C1E" />
+            <line y1={S / 2 - d * g.k} y2={S / 2 - d * g.k} x1={0} x2={S} stroke="#1C1C1E" />
             <text x={4} y={S / 2 - d * g.k - 3} fontSize={9} fontFamily="IBM Plex Mono, monospace" fill={C.faint}>
               {sgn(g.elC + d, 0)}°
             </text>
@@ -605,7 +608,7 @@ function EarthReticle({ profile, timeline, now }: { profile: Float32Array; timel
         ))}
         <path d={g.vis} fill="none" stroke={C.cyan} strokeOpacity={0.75} strokeWidth={1.3} />
         <EarthDisc cx={ex} cy={ey} r={er} now={now} id="re" />
-        <path d={g.terrain} fill="#15173A" stroke="#9AA0D8" strokeWidth={1.3} strokeLinejoin="round" />
+        <path d={g.terrain} fill="#161618" stroke="#A0A0A8" strokeWidth={1.3} strokeLinejoin="round" />
         <path d={g.hid} fill="none" stroke={C.crimson} strokeWidth={1.3} strokeDasharray="3 3" />
         <circle cx={ex} cy={ey} r={er} fill="none" stroke={col} strokeWidth={1.5} strokeDasharray={glitch ? "4 3" : undefined} />
         <circle cx={ex} cy={ey} r={er + 9} fill="none" stroke={col} strokeOpacity={0.6} />
@@ -677,7 +680,7 @@ function Sparkline({ timeline, delay, onPick }: { timeline: P.Timeline; delay: n
   const x = delay * 24;
   return (
     <svg className="spark" viewBox="0 0 720 86" preserveAspectRatio="none" onClick={pick} role="img" aria-label="30 day forecast of sunlight, Earth link and battery charge">
-      <rect x={0} y={44} width={720} height={42} fill="#070818" />
+      <rect x={0} y={44} width={720} height={42} fill="#070708" />
       {els}
       <line x1={x} x2={x} y1={0} y2={86} stroke="#fff" strokeWidth={2} vectorEffect="non-scaling-stroke" />
     </svg>
@@ -984,16 +987,16 @@ function PolarView({ eph, siteId }: { eph: P.Ephemeris; siteId: string }) {
           <stop offset="1" stopColor="#FFB547" stopOpacity="0" />
         </radialGradient>
         <radialGradient id="capg">
-          <stop offset="0" stopColor="#23264F" />
-          <stop offset="1" stopColor="#0C0D22" />
+          <stop offset="0" stopColor="#2A2A2D" />
+          <stop offset="1" stopColor="#0C0C0E" />
         </radialGradient>
       </defs>
       <circle cx={c} cy={c} r={R} fill="url(#capg)" />
       <g clipPath="url(#cap)">
         <rect x={c - 2 * R} y={c - 2 * R} width={4 * R} height={2 * R + off} fill={C.amber} fillOpacity={0.3} transform={`rotate(${eph.subSolarLon} ${c} ${c})`} />
       </g>
-      <circle cx={c} cy={c} r={R} fill="none" stroke="#555A8C" />
-      <circle cx={c} cy={c} r={R / 2} fill="none" stroke="#3A3F66" strokeDasharray="2 4" />
+      <circle cx={c} cy={c} r={R} fill="none" stroke="#5A5A60" />
+      <circle cx={c} cy={c} r={R / 2} fill="none" stroke="#3A3A3E" strokeDasharray="2 4" />
       <text x={c + 4} y={c - R / 2 - 3} fontSize={9}>85°S</text>
       <text x={c + 4} y={c - R - 3} fontSize={9}>80°S</text>
       <line x1={c} y1={c} x2={sun[0]} y2={sun[1]} stroke={C.gold} strokeOpacity={0.5} strokeDasharray="3 4" />
@@ -1014,7 +1017,7 @@ function PolarView({ eph, siteId }: { eph: P.Ephemeris; siteId: string }) {
                 <animate attributeName="stroke-opacity" values="0.8;0" dur="1.8s" repeatCount="indefinite" />
               </circle>
             )}
-            <circle cx={x} cy={y} r={on ? 4.5 : 3} fill={on ? "#fff" : "#A5A8CF"} />
+            <circle cx={x} cy={y} r={on ? 4.5 : 3} fill={on ? "#fff" : "#A3A3A8"} />
             <text
               x={s.id === "malapert" ? x - 8 : x + 8}
               y={s.id === "mouton" ? y - 6 : s.id === "athena" ? y + 13 : y + 4}
@@ -1140,7 +1143,9 @@ export default function App() {
   const [crisis, setCrisis] = useState<Crisis | null>(null);
   const [showProv, setShowProv] = useState(false);
   const [briefing, setBriefing] = useState(true);
-  const [appMode, setAppMode] = useState<"planner" | "game">("planner");
+  const [appMode, setAppMode] = useState<"moon" | "planner" | "game">(() => (location.hash.length > 4 ? "planner" : "moon"));
+  const [showRubric, setShowRubric] = useState(false);
+  const planner = appMode === "planner";
   const [pins, setPins] = useState<Pin[]>([]);
   const [copied, setCopied] = useState(false);
   const [briefCopied, setBriefCopied] = useState(false);
@@ -1455,6 +1460,7 @@ export default function App() {
     setCfg({ arrayW: P.clamp(n[4], 10, 100000), loadW: P.clamp(n[5], 1, 100000), batteryWh: P.clamp(n[6], 10, 1e7), slopeSafe: P.clamp(n[7] / 10, 1, 15) });
     setBeat(null);
     setBriefing(false);
+    setAppMode("planner");
     return true;
   };
   useEffect(() => {
@@ -1610,9 +1616,47 @@ export default function App() {
       </>
     );
 
+  /* From the Moon globe into the planner or the lander game */
+  const planLanding = (l: Landing) => {
+    clearTimers();
+    setBeat(null);
+    if (l.planner) setSiteId(l.planner);
+    else {
+      P.registerTerrain("custom", null);
+      setUpMsg("");
+      setCustom({ ...P.customSite(l.lat, l.lon), name: l.name + " · smooth-sphere horizon", short: l.name, note: l.note + " No terrain loaded for this site, so the horizon is a smooth sphere." });
+      setCLat(String(l.lat));
+      setCLon(String(l.lon));
+      setNudges((m) => ({ ...m, custom: { ix: 10, iy: 10 } }));
+      setMoreSites(true);
+      setSiteId("custom");
+    }
+    setBriefing(false);
+    setAppMode("planner");
+    window.scrollTo(0, 0);
+  };
+  const flyLanding = (l: Landing) => {
+    if (l.planner) setSiteId(l.planner);
+    setAppMode("game");
+    window.scrollTo(0, 0);
+  };
+  const rubricGo = (t: RubricTarget) => {
+    setShowRubric(false);
+    if (t === "provenance") setShowProv(true);
+    else if (t === "tour") {
+      setBriefing(false);
+      setAppMode("planner");
+      runBeat(1);
+    } else {
+      if (t === "planner") setBriefing(false);
+      setAppMode(t);
+    }
+    window.scrollTo(0, 0);
+  };
+
   return (
     <LangCtx.Provider value={lang}>
-    <div className="app">
+    <div className={"app" + (appMode === "moon" ? " moon-mode" : "")}>
       <Starfield />
       <header className="top">
         <div className="brand">
@@ -1622,7 +1666,7 @@ export default function App() {
             <p>{tr("South pole · Sun and Earth above the horizon, by site and date")}</p>
           </div>
         </div>
-        <div className="clock">
+        <div className="clock" hidden={!planner}>
           <div>
             {timeMode === "now" && delay === 0 ? "LIVE UTC" : "SIM UTC"} <b>{fmtDate(tNow)}</b>
           </div>
@@ -1630,7 +1674,7 @@ export default function App() {
             {P.seasonLabel(now ? P.ephemeris(tNow).subSolarLat : 0)} · T+{delay.toFixed(1)} d
           </div>
         </div>
-        <div className="timectl">
+        <div className="timectl" hidden={!planner}>
           <div className="seg" role="group" aria-label="Simulation time">
             <button
               aria-pressed={timeMode === "now"}
@@ -1668,23 +1712,36 @@ export default function App() {
             />
           )}
         </div>
-        <div className={"feed " + feed} title={feed === "live" ? "Sun and Earth positions from JPL Horizons" : "Sun and Earth positions from the built-in ephemeris engine"}>
+        <div hidden={!planner} className={"feed " + feed} title={feed === "live" ? "Sun and Earth positions from JPL Horizons" : "Sun and Earth positions from the built-in ephemeris engine"}>
           <i />
           {feed === "live" ? "DATA: LIVE FEED" : feed === "local" ? "DATA: LOCAL CACHE" : "DATA: CONTACTING JPL"}
         </div>
         <div className="seg modeseg" role="group" aria-label="Section">
-          <button aria-pressed={appMode === "planner"} onClick={() => setAppMode("planner")}>
-            {tr("Mission Planner")}
+          <button
+            aria-pressed={appMode === "moon"}
+            onClick={() => {
+              clearTimers();
+              setCrisis(null);
+              setAppMode("moon");
+            }}
+          >
+            {tr("Moon")}
+          </button>
+          <button aria-pressed={appMode === "planner"} onClick={() => setAppMode("planner")} aria-label={tr("Mission Planner")}>
+            <span className="lg">{tr("Mission Planner")}</span>
+            <span className="sm" aria-hidden="true">{tr("Planner")}</span>
           </button>
           <button
             aria-pressed={appMode === "game"}
+            aria-label={tr("Lander Game")}
             onClick={() => {
               clearTimers();
               setCrisis(null);
               setAppMode("game");
             }}
           >
-            {tr("▶ Lander Game")}
+            <span className="lg">{tr("Lander Game")}</span>
+            <span className="sm" aria-hidden="true">{tr("Lander")}</span>
           </button>
         </div>
         <label className="langsel">
@@ -1695,7 +1752,7 @@ export default function App() {
             <option value="fr">FR</option>
           </select>
         </label>
-        <div className="seg" role="group" aria-label="Audience mode" style={appMode === "game" ? { display: "none" } : undefined}>
+        <div className="seg" role="group" aria-label="Audience mode" style={!planner ? { display: "none" } : undefined}>
           <button aria-pressed={mode === "engineer"} onClick={() => setMode("engineer")}>
             {tr("Flight Engineer")}
           </button>
@@ -1703,8 +1760,13 @@ export default function App() {
             {tr("Explorer")}
           </button>
         </div>
-        <button className="btn" onClick={() => setShowProv(true)}>
-          {tr("Data & Agency Provenance")}
+        <button className="btn" onClick={() => setShowRubric(true)} aria-label={tr("Space Apps rubric")}>
+          <span className="lg">{tr("Space Apps rubric")}</span>
+          <span className="sm" aria-hidden="true">{tr("Rubric")}</span>
+        </button>
+        <button className="btn" onClick={() => setShowProv(true)} aria-label={tr("Data & Agency Provenance")}>
+          <span className="lg">{tr("Data & Agency Provenance")}</span>
+          <span className="sm" aria-hidden="true">{tr("Data")}</span>
         </button>
       </header>
 
@@ -1773,7 +1835,9 @@ export default function App() {
         </section>
       )}
 
-      <nav className="tour" aria-label="Guided tour" style={appMode === "game" ? { display: "none" } : undefined}>
+      {appMode === "moon" && <MoonGlobe baseMs={baseMs} onPlan={planLanding} onFly={flyLanding} />}
+
+      <nav className="tour" aria-label="Guided tour" style={!planner ? { display: "none" } : undefined}>
         <div className="tour-head">
           <span className="tour-title">{tr("Judge's 60-Second Guided Tour")}</span>
           <div className="beats">
@@ -1837,7 +1901,7 @@ export default function App() {
         </div>
       )}
 
-      <main className="grid" style={appMode === "game" ? { display: "none" } : undefined}>
+      <main className="grid" style={!planner ? { display: "none" } : undefined}>
         {/* ---------------- left ---------------- */}
         <div className="col">
           <Panel title="Micro-terrain nudge map" tag={site.terrain ? "LOLA 20 m DEM" : "No terrain"}>
@@ -1907,7 +1971,7 @@ export default function App() {
               {overlay === "sun" && (
                 <>
                   <span><i style={{ background: C.amber }} />Sunlit</span>
-                  <span><i style={{ background: "#05060F", border: "1px solid #3A3F66" }} />In shadow</span>
+                  <span><i style={{ background: "#050505", border: "1px solid #3A3A3E" }} />In shadow</span>
                 </>
               )}
               {overlay === "earth" && (
@@ -1927,7 +1991,7 @@ export default function App() {
               {overlay === "month" && (
                 <>
                   <span><i style={{ background: C.amber }} />More sunlit hours</span>
-                  <span><i style={{ background: "#05060F", border: "1px solid #3A3F66" }} />Fewer</span>
+                  <span><i style={{ background: "#050505", border: "1px solid #3A3A3E" }} />Fewer</span>
                 </>
               )}
               {haven && (
@@ -2086,7 +2150,7 @@ export default function App() {
             <div className="legend">
               <span><i style={{ background: C.gold }} />Sun's path over one lunar day (29.5 d)</span>
               <span><i style={{ background: C.cyan }} />Earth's libration path</span>
-              <span><i style={{ background: "#2B2F5A" }} />Terrain seen from the lander</span>
+              <span><i style={{ background: "#2C2C2E" }} />Terrain seen from the lander</span>
             </div>
             {explorer && (
               <p className="callout">
@@ -2408,13 +2472,13 @@ export default function App() {
         </div>
       </main>
 
-      <footer className="foot">
+      <footer className="foot" hidden={appMode === "moon"}>
         <span>Sun and Earth: {feed === "live" ? "JPL Horizons live feed" : "analytic ephemeris, within 0.06° of JPL Horizons"}. Terrain and horizon masks: NASA LRO LOLA elevation models.</span>
         <span>Azimuth is measured from true local north, clockwise through east.</span>
         <span className="watermark">SYS_ARCH: AI-Generated Prototype (Claude Fable 5.2)</span>
       </footer>
 
-      <div className="survival" role="group" aria-label="Survival gauges" style={appMode === "game" ? { display: "none" } : undefined}>
+      <div className="survival" role="group" aria-label="Survival gauges" style={!planner ? { display: "none" } : undefined}>
         <Gauge label={tr("Battery / thermal")} value={soc} tone={socPct < 20 ? C.crimson : socPct < 50 ? "#FF9A62" : C.cyan} text={socPct + "%"} />
         <Gauge label={tr("Comms link quality")} value={now.lock === "BLACKOUT" ? 0 : P.clamp(now.linkMarginDb / 9.6, 0.12, 1)} tone={now.lock === "LOCK" ? C.cyan : C.blue} text={now.lock === "BLACKOUT" ? "NO LINK" : Math.round((now.lock === "BLACKOUT" ? 0 : P.clamp(now.linkMarginDb / 9.6, 0.12, 1)) * 100) + "%"} />
         <Gauge label={tr("Solar efficiency")} value={now.sunFrac * now.cosEff} tone={C.amber} text={Math.round(now.sunFrac * now.cosEff * 100) + "%"} />
@@ -2426,7 +2490,8 @@ export default function App() {
         </div>
       </div>
 
-      {briefing && <Briefing lang={lang} onClose={() => setBriefing(false)} />}
+      {briefing && planner && <Briefing lang={lang} onClose={() => setBriefing(false)} />}
+      {showRubric && <Rubric onClose={() => setShowRubric(false)} go={rubricGo} />}
       {showProv && <Provenance lang={lang} onClose={() => setShowProv(false)} />}
     </div>
     </LangCtx.Provider>
