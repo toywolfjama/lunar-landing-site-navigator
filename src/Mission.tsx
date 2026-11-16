@@ -9,7 +9,7 @@ import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import * as P from "./physics/lunarAstronomy";
 import { LANDINGS, Landing } from "./landings";
-import { assess, siteFor, cellToM, mToCell, DEFAULT_CELL, SLOPE_LIMIT, TIP_LIMIT, TERRAIN_IDS, fmtHours } from "./checks";
+import { assess, siteFor, cellToM, mToCell, bestCell, SLOPE_LIMIT, TIP_LIMIT, TERRAIN_IDS, fmtHours } from "./checks";
 import { Sky } from "./Sky";
 import { buildGround, Ground } from "./scene/terrain";
 import { buildLander, LanderModel } from "./scene/lander";
@@ -104,7 +104,7 @@ export function Mission() {
   const sel = all.find((l) => l.id === selId) || LANDINGS[0];
   const site = useMemo(() => siteFor(sel), [sel.id, sel.lat, sel.lon]);
   const lolaSite = site.terrain;
-  const spot = spots[sel.id] || (lolaSite ? cellToM(DEFAULT_CELL[site.id] || { ix: 10, iy: 10 }) : { x: 0, y: 0 });
+  const spot = spots[sel.id] || (lolaSite ? cellToM(bestCell(site)) : { x: 0, y: 0 });
   const cell = mToCell(spot.x, spot.y);
   const A = useMemo(() => assess(sel, t, cell), [sel, t, cell.ix, cell.iy]);
 
