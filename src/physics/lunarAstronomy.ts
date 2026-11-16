@@ -10,6 +10,7 @@
  */
 
 import { LOLA } from "./lolaData";
+import { LOLA_SITES } from "./lolaSites";
 
 export const DEG = Math.PI / 180;
 export const R_MOON_KM = 1737.4;
@@ -407,16 +408,29 @@ export interface TerrainData {
 }
 const runtimeTerrain = new Map<string, TerrainData>();
 const matrixCache = new Map<string, number[][]>();
-const patchCache = new Map<string, Int16Array>();
+const patchCache = new Map<string, Float32Array>();
 const horizonCache = new Map<string, Int16Array>();
 const profileCache = new Map<string, Float32Array>();
+
+/** True when NASA LOLA terrain is available for this site id (the polar extract or the curated-site extract). */
+export function hasTerrain(id: string): boolean {
+  return id in LOLA || id in LOLA_SITES;
+}
+const gridOf = (id: string) => runtimeTerrain.get(id)?.grid ?? (LOLA[id] ?? LOLA_SITES[id]).grid;
+/** The 20 m patch in metres. The polar extract stores 0.5 m units; the curated sites store 0.1 m units from a base. */
+const patchOf = (id: string): Float32Array => {
+  const rt = runtimeTerrain.get(id)?.patch;
+  if (rt || id in LOLA) return Float32Array.from(rt ?? decodeInt16(LOLA[id].patch), (v) => v * 0.5);
+  const x = LOLA_SITES[id];
+  return Float32Array.from(decodeInt16(x.patch), (v) => x.base + v / 10);
+};
 
 /** 21 x 21 heights in metres above the 1737.4 km sphere. Z[iy][ix], iy = 0 is the south row. */
 export function buildElevationMatrix(site: Site): number[][] {
   const hit = matrixCache.get(site.id);
   if (hit) return hit;
   const Z: number[][] = [];
-  const src = site.terrain ? (runtimeTerrain.get(site.id)?.grid ?? LOLA[site.id].grid) : null;
+  const src = site.terrain ? gridOf(site.id) : null;
   for (let iy = 0; iy < GRID_N; iy++) {
     const row: number[] = [];
     for (let ix = 0; ix < GRID_N; ix++) row.push(src ? src[iy * GRID_N + ix] : 0);
@@ -428,7 +442,7 @@ export function buildElevationMatrix(site: Site): number[][] {
 
 /** Height of the grid centre above the reference sphere, metres. */
 export function siteDatumM(site: Site): number {
-  return site.terrain ? (runtimeTerrain.get(site.id)?.grid ?? LOLA[site.id].grid)[220] : 0;
+  return site.terrain ? gridOf(site.id)[220] : 0;
 }
 
 /** 20 m LOLA height (m) at x east, y north of the grid centre. Used for the map image. */
@@ -436,7 +450,7 @@ export function patchElevationAt(site: Site, x: number, y: number): number {
   if (!site.terrain) return 0;
   let p = patchCache.get(site.id);
   if (!p) {
-    p = runtimeTerrain.get(site.id)?.patch ?? decodeInt16(LOLA[site.id].patch);
+    p = patchOf(site.id);
     patchCache.set(site.id, p);
   }
   const gx = clamp((x + PATCH_HALF_M) / PATCH_STEP_M, 0, PATCH_N - 1.001);
@@ -446,7 +460,7 @@ export function patchElevationAt(site: Site, x: number, y: number): number {
   const fx = gx - ix;
   const fy = gy - iy;
   const k = iy * PATCH_N + ix;
-  return 0.5 * ((p[k] * (1 - fx) + p[k + 1] * fx) * (1 - fy) + (p[k + PATCH_N] * (1 - fx) + p[k + PATCH_N + 1] * fx) * fy);
+  return (p[k] * (1 - fx) + p[k + 1] * fx) * (1 - fy) + (p[k + PATCH_N] * (1 - fx) + p[k + PATCH_N + 1] * fx) * fy;
 }
 
 const FLAT = new Float32Array(N_AZ);
@@ -457,14 +471,39 @@ export function horizonProfile(site: Site, ix: number, iy: number): Float32Array
   const key = site.id + ":" + ix + ":" + iy;
   const hit = profileCache.get(key);
   if (hit) return hit;
-  let all = horizonCache.get(site.id);
-  if (!all) {
-    all = runtimeTerrain.get(site.id)?.horizon ?? decodeInt16(LOLA[site.id].horizon);
-    horizonCache.set(site.id, all);
-  }
+  const extra = !runtimeTerrain.has(site.id) && !(site.id in LOLA) ? LOLA_SITES[site.id] : undefined;
   const prof = new Float32Array(N_AZ);
-  const o = (iy * GRID_N + ix) * N_AZ;
-  for (let a = 0; a < N_AZ; a++) prof[a] = all[o + a] / 100;
+  if (extra) {
+    // curated sites store the distant horizon (beyond 1 km, from the site centre); the near part is ray-cast here over
+    // the 20 m patch from the chosen cell, starting 80 m out (closer in, interpolation noise on slopes dominates)
+    let far = horizonCache.get(site.id);
+    if (!far) {
+      far = decodeInt16(extra.far);
+      horizonCache.set(site.id, far);
+    }
+    const x0 = (ix - 10) * GRID_STEP_M, y0 = (iy - 10) * GRID_STEP_M;
+    const h0 = patchElevationAt(site, x0, y0) + MAST_HEIGHT_M;
+    const R = R_MOON_KM * 1000;
+    for (let a = 0; a < N_AZ; a++) {
+      const sa = Math.sin(a * DEG), ca = Math.cos(a * DEG);
+      let mx = far[a] / 100;
+      for (let d = 80; d <= 1500; d += 20) {
+        const x = x0 + sa * d, y = y0 + ca * d;
+        if (Math.abs(x) > PATCH_HALF_M - 1 || Math.abs(y) > PATCH_HALF_M - 1) break;
+        const ang = Math.atan2(patchElevationAt(site, x, y) - h0, d) / DEG - d / (2 * R) / DEG;
+        if (ang > mx) mx = ang;
+      }
+      prof[a] = mx;
+    }
+  } else {
+    let all = horizonCache.get(site.id);
+    if (!all) {
+      all = runtimeTerrain.get(site.id)?.horizon ?? decodeInt16(LOLA[site.id].horizon);
+      horizonCache.set(site.id, all);
+    }
+    const o = (iy * GRID_N + ix) * N_AZ;
+    for (let a = 0; a < N_AZ; a++) prof[a] = all[o + a] / 100;
+  }
   profileCache.set(key, prof);
   return prof;
 }

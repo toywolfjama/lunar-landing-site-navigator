@@ -869,7 +869,11 @@ export function Mission() {
       why: "ground too steep",
       tone: A.slope ? (A.slope.max < SLOPE_LIMIT ? "ok" : A.slope.max < TIP_LIMIT ? "warn" : "bad") : "na",
       head: A.slope ? `Steepest slope ${A.slope.max.toFixed(1)}° (limit ${SLOPE_LIMIT}°)` : "Slope unknown: no LOLA terrain here",
-      sub: A.slope ? "Click the ground near the ring to move your touchdown spot" : "The ground you see here is generated, for the flight only",
+      sub: A.slope
+        ? A.slope.smoothed
+          ? "Smoothed: LOLA tracks are far apart this far from the pole, so treat this as a lower bound"
+          : "Click the ground near the ring to move your touchdown spot"
+        : "The ground you see here is generated, for the flight only",
     },
   ];
   const failing = checks.filter((c) => c.tone === "bad" || c.tone === "warn").map((c) => c.why);

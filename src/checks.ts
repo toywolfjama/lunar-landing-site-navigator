@@ -16,8 +16,9 @@ export type Cell = { ix: number; iy: number };
  */
 const bestCache = new Map<string, Cell>();
 export function bestCell(site: P.Site): Cell {
-  // a past landing keeps its real touchdown point (the grid centre); custom or terrain-less sites use the centre too
-  if (!site.terrain || site.id === "athena") return { ix: 10, iy: 10 };
+  // past and planned landings keep their real touchdown point (the grid centre); only the three south-pole candidate
+  // regions are searched for their best spot
+  if (!site.terrain || !["shackleton", "malapert", "mouton"].includes(site.id)) return { ix: 10, iy: 10 };
   const hit = bestCache.get(site.id);
   if (hit) return hit;
   const t0 = Date.UTC(2027, 0, 1);
@@ -50,6 +51,9 @@ export const mToCell = (x: number, y: number): Cell => ({
 
 export function siteFor(l: Landing): P.Site {
   const s = l.site ? P.SITES.find((x) => x.id === l.site) : undefined;
+  if (s && s.terrain) return s;
+  // curated sites with terrain built by scripts/build-terrain.ts are keyed by the landing id
+  if (l.kind !== "custom" && P.hasTerrain(l.id)) return { id: l.id, name: l.name, short: l.name, lat: l.lat, lon: P.norm360(l.lon), terrain: true, note: l.note };
   return s || { id: "ov-" + l.id, name: l.name, short: l.name, lat: l.lat, lon: P.norm360(l.lon), terrain: false, note: "" };
 }
 
@@ -95,11 +99,13 @@ export function assess(l: Landing, t: number, cell: Cell) {
     if (s.sunFrac > 0.5) lit++;
     if (s.lock !== "BLACKOUT") link++;
   }
-  let slope: { max: number; mean: number } | null = null;
+  let slope: { max: number; mean: number; smoothed: boolean } | null = null;
   if (site.terrain) {
     const sl = P.surveySlope(site);
     const k = c.iy * P.GRID_N + c.ix;
-    slope = { max: sl.max[k], mean: sl.mean[k] };
+    // LOLA tracks converge at the poles; away from them they are up to 1-2 km apart and the 30 m map is mostly
+    // interpolated, so 100 m slopes there are smoothed (a lower bound)
+    slope = { max: sl.max[k], mean: sl.mean[k], smoothed: Math.abs(l.lat) < 75 };
   }
   const sunEvent = nextCrossing(site, prof, t, "sun");
   const earthEvent = nextCrossing(site, prof, t, "earth");
