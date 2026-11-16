@@ -9,7 +9,39 @@ export const ARTEMIS_LAT = -84;
 export const TERRAIN_IDS = ["shackleton", "malapert", "mouton", "athena"]; // sites with LOLA terrain in lolaData
 
 export type Cell = { ix: number; iy: number };
-export const DEFAULT_CELL: Record<string, Cell> = { shackleton: { ix: 10, iy: 3 } };
+/**
+ * The default touchdown cell for a LOLA site: flat enough to land (steepest facet under the 10 deg limit), and with the
+ * most hours of sunlight plus Earth in view over a fixed year (2027, every 2 days), so the default does not jump
+ * around when you change the date. Falls back to the flattest cell if none is under the limit.
+ */
+const bestCache = new Map<string, Cell>();
+export function bestCell(site: P.Site): Cell {
+  // a past landing keeps its real touchdown point (the grid centre); custom or terrain-less sites use the centre too
+  if (!site.terrain || site.id === "athena") return { ix: 10, iy: 10 };
+  const hit = bestCache.get(site.id);
+  if (hit) return hit;
+  const t0 = Date.UTC(2027, 0, 1);
+  const sky = Array.from({ length: 183 }, (_, k) => P.localSky(site, t0 + k * 2 * 86400000));
+  const sl = P.surveySlope(site);
+  let best: Cell = { ix: 10, iy: 10 }, bestScore = -1, flat: Cell = best, flatMax = Infinity;
+  for (let iy = 0; iy < P.GRID_N; iy++)
+    for (let ix = 0; ix < P.GRID_N; ix++) {
+      const k = iy * P.GRID_N + ix;
+      if (sl.max[k] < flatMax) { flatMax = sl.max[k]; flat = { ix, iy }; }
+      if (sl.max[k] >= SLOPE_LIMIT) continue;
+      const prof = P.horizonProfile(site, ix, iy);
+      let score = 0;
+      for (const s of sky) {
+        if (s.sunEl > P.horizonAt(prof, s.sunAz)) score++;
+        if (s.earthEl > P.horizonAt(prof, s.earthAz)) score++;
+      }
+      score -= sl.max[k] * 0.01; // tie-break toward flatter ground
+      if (score > bestScore) { bestScore = score; best = { ix, iy }; }
+    }
+  const c = bestScore >= 0 ? best : flat;
+  bestCache.set(site.id, c);
+  return c;
+}
 export const cellToM = (c: Cell) => ({ x: -P.GRID_HALF_M + c.ix * P.GRID_STEP_M, y: -P.GRID_HALF_M + c.iy * P.GRID_STEP_M });
 export const mToCell = (x: number, y: number): Cell => ({
   ix: Math.max(0, Math.min(P.GRID_N - 1, Math.round((x + P.GRID_HALF_M) / P.GRID_STEP_M))),
