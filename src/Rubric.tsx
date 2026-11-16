@@ -3,37 +3,37 @@
    Artemis constraints: NASA's Artemis overview for the 2025 International Space Apps Challenge (NTRS 20250009323). */
 import React, { useEffect } from "react";
 
-export type RubricTarget = "moon" | "planner" | "game" | "tour" | "provenance";
+export type RubricTarget = "overview" | "moon" | "planner" | "game" | "tour" | "provenance";
 
 const CRITERIA: { k: string; q: string; a: string[]; go: RubricTarget; goLabel: string }[] = [
   {
     k: "Impact",
     q: "How much impact can this project have? Does it solve a big problem or a little problem? Will it inspire or help many, or a few?",
     a: [
-      "At the south pole a few hundred metres decide whether a lander has sunlight and a radio link. IM-1 and IM-2 both tipped over on rough ground and ended their missions early.",
-      "Anyone, from a mission team to a classroom, can check power, Earth contact and slope for any site and date in seconds, offline, in English, Spanish or French.",
+      "Every Moon lander needs sunlight for power, a line of sight to Earth for radio, and flat ground. IM-1 and IM-2 both tipped over on rough ground near the south pole and ended their missions early.",
+      "Anyone, from a mission team to a classroom, can check all three for any site and time in seconds. It is free and runs offline.",
     ],
-    go: "moon",
-    goLabel: "See every landing on the Moon",
+    go: "overview",
+    goLabel: "Run a landing check",
   },
   {
     k: "Creativity",
     q: "How creative and innovative is the approach? Is it novel, or an incremental improvement on something that already exists?",
     a: [
-      "One tool goes from a live globe of every landing, down to a 100 m nudge map on real LOLA terrain with a horizon mask for each cell, and then into a playable landing on the same terrain.",
-      "A 15-second site-triage game turns the planning rules into something people remember.",
+      "Earth and the Moon in one view, both lit by the real Sun, with the radio path drawn from Earth to the landing site. You can see why a site has power and a link, not just read a number.",
+      "Behind it, a 100 m terrain map with a horizon mask for every cell, and a playable landing on the same NASA terrain.",
     ],
-    go: "game",
-    goLabel: "Fly the lander",
+    go: "overview",
+    goLabel: "See the Earth-Moon view",
   },
   {
     k: "Validity",
     q: "Is the solution scientifically valid? Will it do what it sets out to do? Can it work in the real world?",
     a: [
-      "Sun and Earth positions match JPL Horizons within 0.06° on 16 dates, and the app pulls the live Horizons feed when it can.",
+      "Sun and Earth positions match JPL Horizons within 0.06° on 16 dates; Earth's rotation reproduces the equinox and solstice sub-solar points within 0.1°.",
       "Sunniest cell on the Shackleton ridge: 90.9% here against 88.0% published (Glaser et al. 2018).",
       "IM-2 Athena hindcast for landing day: Sun 2.5° up, Earth in clear view, 3.6° slope. The crater it tipped in is smaller than the 20 m LOLA grid can show.",
-      "Limits are stated, not hidden: rocks and craters under 20 m are invisible to the slope check.",
+      "Limits are stated, not hidden: the Earth-Moon view is not to scale, and rocks under 20 m are invisible to the slope check.",
     ],
     go: "provenance",
     goLabel: "Open the data and validation notes",
@@ -42,18 +42,18 @@ const CRITERIA: { k: string; q: string; a: string[]; go: RubricTarget; goLabel: 
     k: "Relevance",
     q: "Is the project responsive to the challenge? Is it a complete solution? Is it technically feasible? How usable or user friendly is it?",
     a: [
-      "It answers the site-selection questions with the Artemis constraints below: near the pole, flat enough, in sunlight, and in sight of Earth with no relay assumed.",
+      "One screen answers the site-selection question: pick a site and a time, get three checks and a go or no-go, using the Artemis limits below.",
       "Complete and runnable today: one HTML file, no install, no account, and it works offline.",
     ],
-    go: "planner",
-    goLabel: "Open the Mission Planner",
+    go: "overview",
+    goLabel: "Open the landing check",
   },
   {
     k: "Presentation",
     q: "How well did the team communicate the project? Did they tell the story of the challenge, the solution, and why it matters?",
     a: [
-      "The Moon globe sets the scene, the commander's briefing frames the problem, and a 60-second guided tour shows the four findings judges need.",
-      "Explorer mode explains every number in plain language; a copyable site brief and share links hand a scenario to someone else.",
+      "The opening screen tells the story in one picture: Earth, the Moon, sunlight, and the radio path between them, turning red when it is blocked.",
+      "Plain-language checks and a single verdict; a 60-second guided tour and a copyable site brief for going deeper.",
     ],
     go: "tour",
     goLabel: "Start the 60-second tour",
@@ -61,10 +61,10 @@ const CRITERIA: { k: string; q: string; a: string[]; go: RubricTarget; goLabel: 
 ];
 
 const ARTEMIS: [string, string][] = [
-  ["Land within 6° of latitude of the south pole", "The dashed ring on the Moon globe; all four terrain sites sit inside it."],
-  ["Slope under 10° across a 100 m landing area", "Every 100 m cell is graded from 20 m LOLA slopes. The default safe limit is 8°, and you can change it."],
-  ["Direct-to-Earth communication, no relay assumed", "Earth line of sight against the real horizon for each cell, with a relay orbiter as an optional what-if."],
-  ["Lighting near the pole changes constantly", "30-day sunlight and battery timeline, plus a 12-month landing-window finder."],
+  ["Land within 6° of latitude of the south pole", "The dashed ring on the Moon; all four terrain sites sit inside it."],
+  ["Slope under 10° across a 100 m landing area", "The safe-ground check uses 10° on the steepest 20 m facet of the 100 m landing area."],
+  ["Direct-to-Earth communication, no relay assumed", "The radio-link check and the Earth-to-site line use the real terrain horizon; no relay is assumed."],
+  ["Lighting near the pole changes constantly", "Each check also gives the share of the next 30 days in sunlight and in view of Earth."],
 ];
 
 const SUBMIT: string[] = [

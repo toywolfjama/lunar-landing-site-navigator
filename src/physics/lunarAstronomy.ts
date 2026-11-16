@@ -194,6 +194,94 @@ export function ephemeris(unixMs: number): Ephemeris {
   return out;
 }
 
+/* ------------------------------------------------------------------ */
+/* Earth-Moon-Sun frames for the overview scene                        */
+/* ------------------------------------------------------------------ */
+
+type V3 = [number, number, number];
+type M3 = [V3, V3, V3]; // rows: body = M * ecliptic
+
+export interface SceneFrames {
+  moonDir: V3; // geocentric unit vector to the Moon, ecliptic of date
+  sunDir: V3; // geocentric unit vector to the Sun
+  moonKm: number; // Earth-Moon centre distance
+  eclToMoon: M3; // ecliptic -> selenographic (x to 0E 0N, z to the lunar north pole)
+  eclToEarth: M3; // ecliptic -> Earth-fixed (x to 0E 0N, z to the north pole), using mean sidereal time
+  subLunarLat: number; // where on Earth the Moon is overhead
+  subLunarLon: number;
+}
+
+/**
+ * Same Meeus series as ephemeris(), returned as rotation matrices so that Earth, the Moon and the Sun can be drawn
+ * in one frame: Earth turned to its real sidereal angle, the Moon turned to its real libration.
+ */
+export function sceneFrames(unixMs: number): SceneFrames {
+  const jd = unixMs / 86400000 + 2440587.5;
+  const T = (jd - 2451545.0) / 36525;
+  const Lp = 218.3164477 + 481267.88123421 * T;
+  const D = (297.8501921 + 445267.1114034 * T) * DEG;
+  const M = (357.5291092 + 35999.0502909 * T) * DEG;
+  const Mp = (134.9633964 + 477198.8675055 * T) * DEG;
+  const Fdeg = 93.272095 + 483202.0175233 * T;
+  const F = Fdeg * DEG;
+  const Omega = 125.0445479 - 1934.1362891 * T;
+  let sl = 0, sb = 0, sr = 0;
+  for (const t of LON_TERMS) sl += t[4] * Math.sin(t[0] * D + t[1] * M + t[2] * Mp + t[3] * F);
+  for (const t of LAT_TERMS) sb += t[4] * Math.sin(t[0] * D + t[1] * M + t[2] * Mp + t[3] * F);
+  for (const t of DIST_TERMS) sr += t[4] * Math.cos(t[0] * D + t[1] * M + t[2] * Mp + t[3] * F);
+  const lambda = Lp + sl;
+  const beta = sb;
+  const C = (1.914602 - 0.004817 * T) * Math.sin(M) + 0.019993 * Math.sin(2 * M) + 0.000289 * Math.sin(3 * M);
+  const lambdaSun = 280.46646 + 36000.76983 * T + C;
+
+  const sph = (lonDeg: number, latDeg: number): V3 => unit(lonDeg, latDeg);
+  const moonDir = sph(lambda, beta);
+  const sunDir = sph(lambdaSun, 0);
+
+  // ecliptic -> selenographic: selenographic(lambda, beta) gives the Moon-fixed coordinates of the point facing the
+  // direction opposite to (lambda, beta), so feed it the reversed direction of each ecliptic axis.
+  const toMoon = (v: V3): V3 => {
+    const r = Math.hypot(v[0], v[1]);
+    const lo = Math.atan2(-v[1], -v[0]) / DEG;
+    const la = Math.atan2(-v[2], r) / DEG;
+    const s = selenographic(lo, la, Omega, Fdeg);
+    return sph(s.lon, s.lat);
+  };
+  const cx = toMoon([1, 0, 0]), cy = toMoon([0, 1, 0]), cz = toMoon([0, 0, 1]);
+  const eclToMoon: M3 = [
+    [cx[0], cy[0], cz[0]],
+    [cx[1], cy[1], cz[1]],
+    [cx[2], cy[2], cz[2]],
+  ];
+
+  // ecliptic -> equatorial (obliquity) -> Earth-fixed (Greenwich mean sidereal time)
+  const eps = (23.439291 - 0.0130042 * T) * DEG;
+  const gmst = norm360(280.46061837 + 360.98564736629 * (jd - 2451545.0) + 0.000387933 * T * T) * DEG;
+  const ce = Math.cos(eps), se = Math.sin(eps), cg = Math.cos(gmst), sg = Math.sin(gmst);
+  // equatorial = Rx(-eps) * ecliptic ; earth = Rz(-gmst) * equatorial
+  const E: M3 = [
+    [1, 0, 0],
+    [0, ce, -se],
+    [0, se, ce],
+  ];
+  const R: M3 = [
+    [cg, sg, 0],
+    [-sg, cg, 0],
+    [0, 0, 1],
+  ];
+  const eclToEarth = [0, 1, 2].map((i) => [0, 1, 2].map((j) => R[i][0] * E[0][j] + R[i][1] * E[1][j] + R[i][2] * E[2][j])) as M3;
+  const sub = [0, 1, 2].map((i) => eclToEarth[i][0] * moonDir[0] + eclToEarth[i][1] * moonDir[1] + eclToEarth[i][2] * moonDir[2]);
+  return {
+    moonDir,
+    sunDir,
+    moonKm: 385000.56 + sr,
+    eclToMoon,
+    eclToEarth,
+    subLunarLat: Math.asin(sub[2]) / DEG,
+    subLunarLon: Math.atan2(sub[1], sub[0]) / DEG,
+  };
+}
+
 /* Live ephemeris table (JPL Horizons observer quantities 14, 15, 20 for the Moon, geocentric). */
 export interface EphemerisTable {
   t0: number;
