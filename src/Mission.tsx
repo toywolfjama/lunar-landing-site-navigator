@@ -92,7 +92,9 @@ export function Mission({ engineer = false, onEngineer, demoReq = 0 }: { enginee
   const [ui, setUi] = useState<Ui>({ tau: TOTAL_ANIM, phase: PHASES.length - 1, alt: 0, speed: 0, vs: 0, dist: 0, remain: 0 });
   const [glOk, setGlOk] = useState(true);
   const [slowMo, setSlowMo] = useState(false);
-  const [drawer, setDrawer] = useState<"sky" | "compare" | null>(() => (typeof window !== "undefined" && window.innerWidth < 900 ? null : "sky"));
+  // the sky panel starts closed (its tab stays visible) and opens by itself once, the first time the user picks a site
+  // or a spot, on wide screens
+  const [drawer, setDrawer] = useState<"sky" | "compare" | null>(null);
   const [pins, setPins] = useState<{ key: string; landing: Landing; t: number; spot: { x: number; y: number } }[]>([]);
   useEffect(() => {
     if (timeMode !== "now") return;
@@ -975,6 +977,14 @@ export function Mission({ engineer = false, onEngineer, demoReq = 0 }: { enginee
     () => pins.map((p) => ({ p, a: assess(p.landing, p.t, mToCell(p.spot.x, p.spot.y)) })),
     [pins]
   );
+  const autoSky = useRef({ first: true, done: false });
+  useEffect(() => {
+    if (autoSky.current.first) { autoSky.current.first = false; return; }
+    if (autoSky.current.done) return;
+    autoSky.current.done = true;
+    if (window.innerWidth >= 900) setDrawer((d) => d ?? "sky");
+  }, [sel.id, spot.x, spot.y]);
+
   // 30-second guided demo: a few captioned steps, then the landing at 4x
   const [demoCap, setDemoCap] = useState("");
   const demoTimers = useRef<number[]>([]);
