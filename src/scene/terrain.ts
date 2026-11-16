@@ -237,17 +237,31 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
     blastGeo.computeBoundingSphere();
   };
   // the blast mark: brighter, swept-clean ground with faint radial streaks (soft canvas texture, additive-free)
+  // like the halos seen around real landers (Apollo, Chang'e, IM-1): a small scoured, slightly darker patch under the
+  // engine and a broad, soft, irregular bright zone where the fine dust was blown off; no hard edge, no streaks
   const bc = document.createElement("canvas");
-  bc.width = bc.height = 128;
+  bc.width = bc.height = 256;
   const bx = bc.getContext("2d")!;
-  const grd = bx.createRadialGradient(64, 64, 4, 64, 64, 64);
-  grd.addColorStop(0, "rgba(255,255,255,0.35)");
-  grd.addColorStop(0.5, "rgba(255,255,255,0.18)");
-  grd.addColorStop(1, "rgba(255,255,255,0)");
-  bx.fillStyle = grd;
-  bx.fillRect(0, 0, 128, 128);
+  const bimg = bx.createImageData(256, 256);
+  const lobes = Array.from({ length: 7 }, () => ({ a: rnd() * Math.PI * 2, k: 0.06 + rnd() * 0.1 }));
+  for (let j = 0; j < 256; j++)
+    for (let i = 0; i < 256; i++) {
+      const dx = (i - 127.5) / 128, dy = (j - 127.5) / 128;
+      const ang = Math.atan2(dy, dx);
+      let edge = 0.78;
+      for (const l of lobes) edge += l.k * Math.cos(ang - l.a) * 0.5;
+      edge += (vnoise(i / 18, j / 18) - 0.5) * 0.12;
+      const r = Math.hypot(dx, dy) / edge;
+      const halo = Math.max(0, 1 - smooth(0.25, 1, r)) * (0.9 + (vnoise(i / 30 + 3, j / 30 + 9) - 0.5) * 0.12);
+      const scour = 1 - smooth(0.05, 0.16, r);
+      const v = 255 * (1 - 0.35 * scour);
+      const o = (j * 256 + i) * 4;
+      bimg.data[o] = v; bimg.data[o + 1] = v * 0.985; bimg.data[o + 2] = v * 0.96;
+      bimg.data[o + 3] = 255 * Math.min(1, halo * 0.42 + scour * 0.35);
+    }
+  bx.putImageData(bimg, 0, 0);
   const blastTex = new THREE.CanvasTexture(bc);
-  const BS = 16, BN = 21;
+  const BS = 24, BN = 25;
   const blastGeo = new THREE.PlaneGeometry(BS * 2, BS * 2, BN - 1, BN - 1);
   const blastBase: number[] = [];
   {
@@ -263,7 +277,7 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
   geos.push(blastGeo);
   mats.push(blastMat);
   const setBlast = (k: number) => {
-    blastMat.opacity = 0.6 * Math.max(0, Math.min(1, k));
+    blastMat.opacity = 0.75 * Math.max(0, Math.min(1, k));
     blast.visible = k > 0.01;
   };
   setSpot(0, 0);
