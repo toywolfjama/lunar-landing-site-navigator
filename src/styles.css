@@ -311,3 +311,8 @@ body.cine .top { opacity: 0; pointer-events: none; transition: opacity 0.4s; }
   .eng-toggle { padding: 6px 8px; font-size: 0; gap: 0; }
   .eng-toggle::after { content: "Go"; font-size: 12px; margin-left: 6px; }
 }
+
+.btn.best { justify-content: center; height: 40px; font-size: 14px; font-weight: 600; color: #1a1300; background: var(--amber); border: 0; }
+.btn.best:hover:not(:disabled) { background: rgb(255, 184, 64); }
+.btn.best:disabled { opacity: 0.4; cursor: not-allowed; }
+.ms-best-msg { margin: -4px 0 0; font-size: 12px; color: var(--dim); }

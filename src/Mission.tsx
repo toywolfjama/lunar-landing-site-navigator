@@ -944,6 +944,27 @@ export function Mission({ engineer = false, onEngineer }: { engineer?: boolean; 
     () => pins.map((p) => ({ p, a: assess(p.landing, p.t, mToCell(p.spot.x, p.spot.y)) })),
     [pins]
   );
+  // best 100 m cell at this time: under the slope limit, then most sunlight, Earth in view, flattest
+  const [bestMsg, setBestMsg] = useState("");
+  const pickBest = () => {
+    if (!lolaSite) return;
+    const grid = P.surveyGrid(site, P.DEFAULT_POWER, t);
+    const sl = P.surveySlope(site);
+    let best = -1, bestScore = -Infinity;
+    for (let k = 0; k < grid.length; k++) {
+      if (sl.max[k] >= SLOPE_LIMIT) continue;
+      const g = grid[k];
+      const score = g.powerW + (g.lock === "LOCK" ? 400 : g.lock === "GRAZING" ? 250 : 0) + Math.min(5, g.clearance) * 20 - sl.max[k] * 8;
+      if (score > bestScore) { bestScore = score; best = k; }
+    }
+    if (best < 0) { setBestMsg("No cell here is under the 10° slope limit."); return; }
+    const c = { ix: best % P.GRID_N, iy: Math.floor(best / P.GRID_N) };
+    const m = cellToM(c);
+    setSpots((ms) => ({ ...ms, [sel.id]: { x: m.x, y: m.y } }));
+    const g = grid[best];
+    setBestMsg(`Moved to ${Math.round(m.x)} m E, ${Math.round(m.y)} m N: ${sl.max[best].toFixed(1)}° slope, ${g.powerW > 0 ? "sunlit" : "in shadow"}, ${g.lock === "BLACKOUT" ? "no Earth in view" : "Earth in view"}.${g.lock === "BLACKOUT" ? " Earth is below the horizon from every safe cell now; try another time." : ""}`);
+  };
+  useEffect(() => setBestMsg(""), [sel.id, t]);
   const pin = (dt = 0) => {
     const key = sel.id + ":" + (t + dt) + ":" + spot.x + ":" + spot.y;
     setPins((ps) => (ps.some((x) => x.key === key) ? ps : [...ps, { key, landing: { ...sel }, t: t + dt, spot: { ...spot } }].slice(-12)));
@@ -1112,6 +1133,10 @@ export function Mission({ engineer = false, onEngineer }: { engineer?: boolean; 
           <b>{go ? "Go for landing" : "No-go"}</b>
           <span>{go ? (A.slope ? "Power, radio and safe ground." : "Power and radio. Slope unknown.") : failing.join(" and ").replace(/^./, (c) => c.toUpperCase()) + "."}</span>
         </div>
+        <button className="btn best" onClick={pickBest} disabled={!lolaSite} title={lolaSite ? "Move the touchdown spot to the best 100 m cell at this time: flat, sunlit and in contact with Earth" : "Needs NASA LOLA terrain at this site"}>
+          ★ Find the best spot
+        </button>
+        {bestMsg && <p className="ms-best-msg">{bestMsg}</p>}
         <button className="btn land" onClick={() => land(0)}>
           ▶ Land here
         </button>
