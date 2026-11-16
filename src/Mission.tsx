@@ -94,7 +94,10 @@ export function Mission() {
   const [pins, setPins] = useState<{ key: string; landing: Landing; t: number; spot: { x: number; y: number } }[]>([]);
   useEffect(() => {
     if (timeMode !== "now") return;
-    const id = setInterval(() => setClock(Math.floor(Date.now() / 60000) * 60000), 60000);
+    // Entering "now" mode jumps to the current minute at once, then keeps up with the clock.
+    const tick = () => setClock(Math.floor(Date.now() / 60000) * 60000);
+    tick();
+    const id = setInterval(tick, 15000);
     return () => clearInterval(id);
   }, [timeMode]);
   useEffect(() => saveCustoms(customs), [customs]);
@@ -994,8 +997,21 @@ export function Mission() {
                 if (!isNaN(v)) { setSetMs(v); setTimeMode("set"); }
               }}
             />
-            <button className="btn small" aria-pressed={timeMode === "now"} onClick={() => setTimeMode("now")}>Now</button>
+            <button
+              className="btn small"
+              aria-pressed={timeMode === "now"}
+              onClick={() => {
+                setClock(Math.floor(Date.now() / 60000) * 60000);
+                setTimeMode("now");
+              }}
+            >
+              Now
+            </button>
           </div>
+          <small className="ms-local">
+            {timeMode === "now" ? "Live · " : ""}your time:{" "}
+            {new Date(t).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}
+          </small>
         </label>
         <div className="ms-steps" role="group" aria-label="Step time">
           {[-7, -1, 1, 7].map((d) => (
