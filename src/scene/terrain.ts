@@ -216,6 +216,8 @@ export function buildGround(site: P.Site, lat: number, lon: number): Ground {
       rocks.setMatrixAt(i, m4);
     });
     rocks.instanceMatrix.needsUpdate = true;
+    rocks.computeBoundingSphere(); // cover every instance, not just one rock at the origin, so they are not culled
+    rocks.computeBoundingBox();
     // blast mark: a small draped grid around the spot
     const bp = blastGeo.getAttribute("position") as THREE.BufferAttribute;
     for (let i = 0; i < bp.count; i++) {
