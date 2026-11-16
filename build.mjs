@@ -1,20 +1,22 @@
 import fs from "node:fs";
 const js = fs.readFileSync("dist/main.js", "utf8").replace(/<\/script/gi, "<\\/script");
 const css = fs.readFileSync("src/styles.css", "utf8");
+const moon = "data:image/jpeg;base64," + fs.readFileSync("assets/moon_lroc_1k.jpg").toString("base64");
 const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lunar Landing Site Navigator</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Saira:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<meta name="theme-color" content="#000000">
+<meta name="description" content="Every Moon landing on a live, sunlit globe, and a planner for south-pole landing sites: sunlight, Earth contact and slope from NASA LRO data.">
 <style>
 ${css}
 </style>
 </head>
 <body>
 <div id="root"></div>
+<script>window.MOON_TEX = "${moon}";</script>
 <script>
 ${js}
 </script>

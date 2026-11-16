@@ -1,0 +1,15 @@
+{
+  "name": "lunar-landing-site-navigator",
+  "private": true,
+  "scripts": {
+    "build": "bun build src/main.tsx --outfile dist/main.js --minify --target browser --define process.env.NODE_ENV='\"production\"' && node build.mjs"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0"
+  }
+}
