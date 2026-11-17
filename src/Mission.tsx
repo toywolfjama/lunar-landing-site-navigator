@@ -92,9 +92,7 @@ export function Mission({ engineer = false, onEngineer, demoReq = 0 }: { enginee
   const [ui, setUi] = useState<Ui>({ tau: TOTAL_ANIM, phase: PHASES.length - 1, alt: 0, speed: 0, vs: 0, dist: 0, remain: 0 });
   const [glOk, setGlOk] = useState(true);
   const [slowMo, setSlowMo] = useState(false);
-  // the sky panel starts closed (its tab stays visible) and opens by itself once, the first time the user picks a site
-  // or a spot, on wide screens
-  const [drawer, setDrawer] = useState<"sky" | "compare" | null>(null);
+  const [drawer, setDrawer] = useState<"sky" | "compare" | null>(() => (typeof window !== "undefined" && window.innerWidth < 900 ? null : "sky"));
   const [pins, setPins] = useState<{ key: string; landing: Landing; t: number; spot: { x: number; y: number } }[]>([]);
   useEffect(() => {
     if (timeMode !== "now") return;
@@ -224,30 +222,6 @@ export function Mission({ engineer = false, onEngineer, demoReq = 0 }: { enginee
     moonTex.colorSpace = earthTex.colorSpace = THREE.SRGBColorSpace;
     moonTex.anisotropy = earthTex.anisotropy = 8;
     const moonMat = new THREE.MeshStandardMaterial({ map: moonTex, roughness: 1, metalness: 0 });
-    // the Moon map's albedo, sampled where the sphere would show it, so the site ground takes the same colour
-    {
-      const img = new Image();
-      img.src = (globalThis as any).MOON_TEX || "assets/moon_lroc_1k.jpg";
-      img.decode().then(() => {
-        const cv = document.createElement("canvas");
-        cv.width = img.naturalWidth; cv.height = img.naturalHeight;
-        const cx = cv.getContext("2d")!;
-        cx.drawImage(img, 0, 0);
-        const W = cv.width, H = cv.height, px = cx.getImageData(0, 0, W, H).data;
-        const lin = (v: number) => Math.pow(v / 255, 2.2);
-        const at = (i: number, j: number) => lin(px[((Math.min(H - 1, Math.max(0, j)) * W + (((i % W) + W) % W)) * 4)]);
-        const sample = (w: THREE.Vector3) => {
-          const p = w.clone().normalize();
-          let u = Math.atan2(p.z, -p.x) / (2 * Math.PI);
-          if (u < 0) u += 1;
-          const v = Math.acos(Math.max(-1, Math.min(1, p.y))) / Math.PI;
-          const x = u * W - 0.5, y = v * H - 0.5, i = Math.floor(x), j = Math.floor(y), fx = x - i, fy = y - j;
-          return (at(i, j) * (1 - fx) + at(i + 1, j) * fx) * (1 - fy) + (at(i, j + 1) * (1 - fx) + at(i + 1, j + 1) * fx) * fy;
-        };
-        S.current.moonAlbedo = sample;
-        if (S.current.ground) S.current.ground.setAlbedo(sample);
-      }).catch(() => {});
-    }
     const moonDetail = addSurfaceDetail(moonMat, new THREE.Vector3());
     const moon = new THREE.Mesh(new THREE.SphereGeometry(1, 256, 128), moonMat);
     moon.name = "moon";
@@ -653,8 +627,7 @@ export function Mission({ engineer = false, onEngineer, demoReq = 0 }: { enginee
         st.sunSprite.scale.setScalar(D * 0.16); // the disc is about 0.5 deg across; the rest is glow
       }
       earthLabel.visible = !cineShot;
-      // the radio path is for the wide view; close to the site its far end makes it flicker against the ground
-      st.radio.visible = !cineShot && camR > 40;
+      st.radio.visible = !cineShot;
       pathAll.visible = pathDone.visible = !cineShot || cineShot.id === "0a";
       (st.composer as EffectComposer).render();
       labels.render(scene, camera);
@@ -721,7 +694,6 @@ export function Mission({ engineer = false, onEngineer, demoReq = 0 }: { enginee
       // only the lander casts shadows: at grazing Sun angles, 20 m terrain bumps would contradict the horizon check
       g.group.traverse((o: any) => { if (o.isMesh && o.name !== "rocks") o.castShadow = false; });
       g.setDetailOrigin(st.siteP);
-      if (st.moonAlbedo) g.setAlbedo(st.moonAlbedo);
       st.moonDetail.setOrigin(st.siteP);
     }
     const g: Ground = st.ground;
@@ -977,14 +949,6 @@ export function Mission({ engineer = false, onEngineer, demoReq = 0 }: { enginee
     () => pins.map((p) => ({ p, a: assess(p.landing, p.t, mToCell(p.spot.x, p.spot.y)) })),
     [pins]
   );
-  const autoSky = useRef({ first: true, done: false });
-  useEffect(() => {
-    if (autoSky.current.first) { autoSky.current.first = false; return; }
-    if (autoSky.current.done) return;
-    autoSky.current.done = true;
-    if (window.innerWidth >= 900) setDrawer((d) => d ?? "sky");
-  }, [sel.id, spot.x, spot.y]);
-
   // 30-second guided demo: a few captioned steps, then the landing at 4x
   const [demoCap, setDemoCap] = useState("");
   const demoTimers = useRef<number[]>([]);
